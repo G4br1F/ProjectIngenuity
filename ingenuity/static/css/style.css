@@ -1,0 +1,185 @@
+/* ===========================
+   Project Ingenuity Dashboard
+   =========================== */
+
+:root{
+
+    --bg:#0f172a;
+    --panel:#1e293b;
+    --border:#334155;
+    --text:#ffffff;
+    --secondary:#94a3b8;
+
+    --green:#22c55e;
+    --yellow:#f59e0b;
+    --red:#ef4444;
+    --blue:#3b82f6;
+
+}
+
+body{
+
+    background:var(--bg);
+    color:var(--text);
+
+    font-family:Inter,Segoe UI,Arial,sans-serif;
+
+}
+
+.card{
+
+    background:var(--panel);
+
+    border:1px solid var(--border)!important;
+
+    border-radius:16px;
+
+    box-shadow:0 10px 25px rgba(0,0,0,.25);
+
+}
+
+.card-header{
+
+    background:transparent;
+
+    border-bottom:1px solid var(--border);
+
+    font-weight:600;
+
+    color:white;
+
+}
+
+#camera-stream{
+
+    width:100%;
+
+    border-radius:12px;
+
+    border:2px solid var(--border);
+
+}
+
+.metric{
+
+    margin-bottom:22px;
+
+}
+
+.metric span{
+
+    font-size:.95rem;
+
+}
+
+.progress{
+
+    margin-top:8px;
+
+    height:12px;
+
+    background:#0b1220;
+
+    border-radius:20px;
+
+    overflow:hidden;
+
+}
+
+.progress-bar{
+
+    transition:width .5s ease;
+
+    background:var(--green);
+
+}
+
+.info-row{
+
+    display:flex;
+
+    justify-content:space-between;
+
+    align-items:center;
+
+    padding:12px 0;
+
+    border-bottom:1px solid var(--border);
+
+}
+
+.info-row:last-child{
+
+    border-bottom:none;
+
+}
+
+#system-log{
+
+    background:#0b1220;
+
+    border-radius:10px;
+
+    padding:15px;
+
+    min-height:180px;
+
+    font-family:Consolas,monospace;
+
+    color:#9ca3af;
+
+    overflow-y:auto;
+
+}
+
+.badge{
+
+    font-size:.9rem;
+
+    padding:.6rem .9rem;
+
+}
+
+h3{
+
+    font-weight:700;
+
+}
+
+small{
+
+    color:var(--secondary);
+
+}
+
+@media(max-width:992px){
+
+    #camera-stream{
+
+        margin-bottom:20px;
+
+    }
+
+}
+
+.card-body,
+.card-body span,
+.card-body div,
+.card-body p,
+.card-body strong {
+
+    color: var(--text) !important;
+
+}
+.metric,
+.metric span,
+.info-row,
+.info-row span {
+
+    color: var(--text) !important;
+
+}
+.metric .d-flex span,
+.info-row span {
+    color: #ffffff !important;
+}

@@ -1,0 +1,10 @@
+CAMERA_ID = 0
+
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
+
+WINDOW_NAME = "Project Atlas"
+
+SAVE_FOLDER = "photos"
+
+VIDEO_FOLDER = "videos"
