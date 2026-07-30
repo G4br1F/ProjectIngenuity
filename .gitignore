@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+
+photos/
+videos/
+
+.idea/
+.vscode/
+
+.env
