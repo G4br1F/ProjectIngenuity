@@ -9,3 +9,24 @@ videos/
 .vscode/
 
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv311/
+
+# Ultralytics / YOLO
+*.pt
+runs/
+yolo*_ncnn_model/
+
+# Test e dati locali
+test/
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
