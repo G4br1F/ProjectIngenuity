@@ -1,185 +1,257 @@
-/* ===========================
-   Project Ingenuity Dashboard
-   =========================== */
+/* =========================
+   IMPROVED DASHBOARD
+   ========================= */
 
-:root{
-
-    --bg:#0f172a;
-    --panel:#1e293b;
-    --border:#334155;
-    --text:#ffffff;
-    --secondary:#94a3b8;
-
-    --green:#22c55e;
-    --yellow:#f59e0b;
-    --red:#ef4444;
-    --blue:#3b82f6;
-
+.logo {
+    align-items: center;
 }
 
-body{
-
-    background:var(--bg);
-    color:var(--text);
-
-    font-family:Inter,Segoe UI,Arial,sans-serif;
-
+.logo div {
+    display: flex;
+    flex-direction: column;
 }
 
-.card{
-
-    background:var(--panel);
-
-    border:1px solid var(--border)!important;
-
-    border-radius:16px;
-
-    box-shadow:0 10px 25px rgba(0,0,0,.25);
-
+.logo small {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
 }
 
-.card-header{
-
-    background:transparent;
-
-    border-bottom:1px solid var(--border);
-
-    font-weight:600;
-
-    color:white;
-
+.sidebar-bottom {
+    margin-top: auto;
 }
 
-#camera-stream{
+.network-mini {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 
-    width:100%;
+    padding: 12px;
 
-    border-radius:12px;
+    margin-top: 30px;
+    margin-bottom: 12px;
 
-    border:2px solid var(--border);
-
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
-.metric{
-
-    margin-bottom:22px;
-
+.network-mini div {
+    display: flex;
+    flex-direction: column;
 }
 
-.metric span{
-
-    font-size:.95rem;
-
+.network-mini small {
+    color: var(--muted);
+    font-size: 11px;
 }
 
-.progress{
-
-    margin-top:8px;
-
-    height:12px;
-
-    background:#0b1220;
-
-    border-radius:20px;
-
-    overflow:hidden;
-
+.network-mini strong {
+    margin-top: 2px;
+    font-size: 13px;
 }
 
-.progress-bar{
+.page-description {
+    margin: 5px 0 0;
 
-    transition:width .5s ease;
-
-    background:var(--green);
-
+    color: var(--muted);
+    font-size: 14px;
 }
 
-.info-row{
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
 
-    display:flex;
-
-    justify-content:space-between;
-
-    align-items:center;
-
-    padding:12px 0;
-
-    border-bottom:1px solid var(--border);
-
+    font-size: 12px;
+    font-weight: 700;
 }
 
-.info-row:last-child{
+.connection-status::before {
+    content: "";
 
-    border-bottom:none;
+    width: 8px;
+    height: 8px;
 
+    border-radius: 50%;
 }
 
-#system-log{
-
-    background:#0b1220;
-
-    border-radius:10px;
-
-    padding:15px;
-
-    min-height:180px;
-
-    font-family:Consolas,monospace;
-
-    color:#9ca3af;
-
-    overflow-y:auto;
-
+.connection-status.connected {
+    color: var(--success);
 }
 
-.badge{
-
-    font-size:.9rem;
-
-    padding:.6rem .9rem;
-
+.connection-status.connected::before {
+    background: var(--success);
 }
 
-h3{
-
-    font-weight:700;
-
+.connection-status.disconnected {
+    color: var(--danger);
 }
 
-small{
-
-    color:var(--secondary);
-
+.connection-status.disconnected::before {
+    background: var(--danger);
 }
 
-@media(max-width:992px){
-
-    #camera-stream{
-
-        margin-bottom:20px;
-
-    }
-
+.user {
+    display: flex;
+    align-items: center;
+    gap: 7px;
 }
 
-.card-body,
-.card-body span,
-.card-body div,
-.card-body p,
-.card-body strong {
-
-    color: var(--text) !important;
-
+.stat-card {
+    display: flex;
+    align-items: center;
+    gap: 15px;
 }
-.metric,
-.metric span,
-.info-row,
-.info-row span {
 
-    color: var(--text) !important;
+.stat-icon {
+    width: 42px;
+    height: 42px;
 
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 10px;
+
+    background: var(--bg);
+
+    font-size: 20px;
 }
-.metric .d-flex span,
-.info-row span {
-    color: #ffffff !important;
+
+.card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+
+    margin-bottom: 15px;
+}
+
+.card-subtitle {
+    display: block;
+
+    margin-top: 4px;
+
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.live-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    padding: 5px 8px;
+
+    border-radius: 6px;
+
+    background: rgba(239, 68, 68, 0.12);
+
+    color: #f87171;
+
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.live-badge span {
+    width: 6px;
+    height: 6px;
+
+    border-radius: 50%;
+
+    background: #ef4444;
+}
+
+.camera-view {
+    width: 100%;
+
+    aspect-ratio: 4 / 3;
+
+    overflow: hidden;
+
+    border-radius: 10px;
+
+    background: #020617;
+}
+
+.camera-view img {
+    display: block;
+
+    width: 100%;
+    height: 100%;
+
+    object-fit: contain;
+}
+
+.robot-status {
+    display: flex;
+    flex-direction: column;
+
+    gap: 15px;
+}
+
+.robot-status-main {
+    display: flex;
+    align-items: center;
+
+    gap: 14px;
+
+    padding: 15px;
+
+    border-radius: 10px;
+
+    background: var(--bg);
+}
+
+.robot-status-icon {
+    font-size: 32px;
+}
+
+.robot-status-main div:last-child {
+    display: flex;
+    flex-direction: column;
+
+    gap: 3px;
+}
+
+.robot-status-main strong {
+    color: var(--success);
+
+    font-size: 15px;
+}
+
+.robot-status-main span {
+    color: var(--muted);
+
+    font-size: 12px;
+}
+
+.status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding-bottom: 12px;
+
+    border-bottom: 1px solid var(--border);
+
+    font-size: 13px;
+}
+
+.status-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.status-row span {
+    color: var(--muted);
+}
+
+.status-row strong {
+    font-weight: 500;
+}
+
+.status-ok {
+    color: var(--success) !important;
 }

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+
+<html lang="it">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Ingenuity — Robot OS</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/css/style.css"
+    >
+
+</head>
+
+
+<body>
+
+
+<div class="dashboard">
+
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar">
+
+        <div class="logo">
+
+            <span class="logo-icon">
+                🤖
+            </span>
+
+            <div>
+
+                <strong>
+                    Ingenuity
+                </strong>
+
+                <small>
+                    Robot OS
+                </small>
+
+            </div>
+
+        </div>
+
+
+        <nav class="nav">
+
+            <a
+                href="/"
+                class="active"
+            >
+                🏠
+                <span>Dashboard</span>
+            </a>
+
+            <a href="#">
+                🎮
+                <span>Controllo</span>
+            </a>
+
+            <a href="#">
+                🎥
+                <span>Telecamera</span>
+            </a>
+
+            <a href="#">
+                🤖
+                <span>AI</span>
+            </a>
+
+            <a href="#">
+                📡
+                <span>Rete</span>
+            </a>
+
+            <a href="#">
+                ⚙️
+                <span>Impostazioni</span>
+            </a>
+
+        </nav>
+
+
+        <div class="sidebar-bottom">
+
+            <div class="network-mini">
+
+                <span>
+                    📡
+                </span>
+
+                <div>
+
+                    <small>
+                        IP Robot
+                    </small>
+
+                    <strong id="network-ip">
+                        --
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <form
+                method="POST"
+                action="/logout"
+            >
+
+                <button
+                    type="submit"
+                    class="logout-button"
+                >
+                    Logout
+                </button>
+
+            </form>
+
+        </div>
+
+    </aside>
+
+
+    <!-- MAIN -->
+
+    <main class="main">
+
+
+        <!-- TOPBAR -->
+
+        <header class="topbar">
+
+            <div>
+
+                <h1>
+                    Dashboard
+                </h1>
+
+                <p class="page-description">
+                    Centro di controllo di Ingenuity
+                </p>
+
+            </div>
+
+
+            <div class="user-area">
+
+                <div
+                    id="connection-status"
+                    class="connection-status connected"
+                >
+                    ONLINE
+                </div>
+
+                <div class="user">
+
+                    <span>
+                        👤
+                    </span>
+
+                    {{ username }}
+
+                </div>
+
+            </div>
+
+        </header>
+
+
+        <!-- SYSTEM STATS -->
+
+        <section class="stats">
+
+
+            <div class="stat-card">
+
+                <div class="stat-icon">
+                    ⚡
+                </div>
+
+                <div>
+
+                    <div class="stat-label">
+                        CPU
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="cpu-value"
+                    >
+                        --
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="stat-card">
+
+                <div class="stat-icon">
+                    🧠
+                </div>
+
+                <div>
+
+                    <div class="stat-label">
+                        RAM
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="ram-value"
+                    >
+                        --
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="stat-card">
+
+                <div class="stat-icon">
+                    🌡️
+                </div>
+
+                <div>
+
+                    <div class="stat-label">
+                        Temperatura
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="temperature-value"
+                    >
+                        --
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="stat-card">
+
+                <div class="stat-icon">
+                    ⏱️
+                </div>
+
+                <div>
+
+                    <div class="stat-label">
+                        Uptime
+                    </div>
+
+                    <div
+                        class="stat-value"
+                        id="uptime-value"
+                    >
+                        --
+                    </div>
+
+                </div>
+
+            </div>
+
+
+        </section>
+
+
+        <!-- MAIN CONTENT -->
+
+        <section class="content-grid">
+
+
+            <!-- CAMERA -->
+
+            <div class="card camera-card">
+
+                <div class="card-header">
+
+                    <div>
+
+                        <h2 class="card-title">
+                            Telecamera
+                        </h2>
+
+                        <span class="card-subtitle">
+                            Logitech C270 · Live
+                        </span>
+
+                    </div>
+
+
+                    <span class="live-badge">
+
+                        <span></span>
+
+                        LIVE
+
+                    </span>
+
+                </div>
+
+
+                <div class="camera-view">
+
+                    <img
+                        src="/api/camera/stream"
+                        alt="Streaming live della telecamera di Ingenuity"
+                    >
+
+                </div>
+
+            </div>
+
+
+            <!-- ROBOT STATUS -->
+
+            <div class="card">
+
+                <div class="card-header">
+
+                    <div>
+
+                        <h2 class="card-title">
+                            Stato robot
+                        </h2>
+
+                        <span class="card-subtitle">
+                            Stato dei componenti
+                        </span>
+
+                    </div>
+
+                </div>
+
+
+                <div class="robot-status">
+
+
+                    <div class="robot-status-main">
+
+                        <div class="robot-status-icon">
+                            🤖
+                        </div>
+
+                        <div>
+
+                            <strong id="robot-status">
+                                Online
+                            </strong>
+
+                            <span>
+                                Sistema operativo attivo
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span>
+                            Modalità
+                        </span>
+
+                        <strong id="robot-mode">
+                            manual
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span>
+                            Motori
+                        </span>
+
+                        <strong id="motors-status">
+                            standby
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span>
+                            Telecamera
+                        </span>
+
+                        <strong
+                            id="camera-status"
+                            class="status-ok"
+                        >
+                            online
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span>
+                            Intelligenza artificiale
+                        </span>
+
+                        <strong id="ai-status">
+                            offline
+                        </strong>
+
+                    </div>
+
+
+                </div>
+
+            </div>
+
+
+        </section>
+
+
+    </main>
+
+</div>
+
+
+<script
+    src="/static/js/dashboard.js"
+></script>
+
+
+</body>
+
+</html>
