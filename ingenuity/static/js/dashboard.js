@@ -17,138 +17,250 @@ const elements = {
 };
 
 
-function setStatus(element, status) {
+function setText(element, value) {
 
-    if (!element) {
-        return;
+    if (element) {
+        element.textContent = value;
     }
-
-    element.textContent = status;
 }
 
 
-async function updateDashboard() {
+function updateDashboard(data) {
 
-    try {
+    /*
+     * ==============================
+     * SYSTEM
+     * ==============================
+     */
 
-        const response = await fetch(
-            "/api/status",
-            {
-                cache: "no-store",
-            }
+    const cpu = Number(data.cpu ?? 0);
+    const ram = Number(data.ram ?? 0);
+    const temperature = data.temperature;
+    const uptime = Number(data.uptime ?? 0);
+
+
+    setText(
+        elements.cpu,
+        `${cpu.toFixed(1)}%`
+    );
+
+
+    setText(
+        elements.ram,
+        `${ram.toFixed(1)}%`
+    );
+
+
+    setText(
+        elements.temperature,
+        temperature !== null
+            ? `${Number(temperature).toFixed(1)} °C`
+            : "--"
+    );
+
+
+    setText(
+        elements.uptime,
+        formatUptime(uptime)
+    );
+
+
+    /*
+     * ==============================
+     * NETWORK
+     * ==============================
+     */
+
+    setText(
+        elements.networkIp,
+        data.ip ?? "--"
+    );
+
+
+    /*
+     * ==============================
+     * ROBOT
+     * ==============================
+     */
+
+    setText(
+        elements.robotStatus,
+        "Online"
+    );
+
+
+    setText(
+        elements.robotMode,
+        "manual"
+    );
+
+
+    /*
+     * ==============================
+     * COMPONENTS
+     * ==============================
+     */
+
+    setText(
+        elements.motorsStatus,
+        "standby"
+    );
+
+
+    setText(
+        elements.cameraStatus,
+        data.camera
+            ? "online"
+            : "offline"
+    );
+
+
+    setText(
+        elements.aiStatus,
+        "online"
+    );
+
+
+    /*
+     * ==============================
+     * CONNECTION
+     * ==============================
+     */
+
+    if (elements.connectionStatus) {
+
+        elements.connectionStatus.textContent =
+            "ONLINE";
+
+        elements.connectionStatus.classList.add(
+            "connected"
         );
 
-        if (!response.ok) {
-            throw new Error(
-                `HTTP ${response.status}`
+        elements.connectionStatus.classList.remove(
+            "disconnected"
+        );
+    }
+
+
+    /*
+     * ==============================
+     * CAMERA / AI
+     * ==============================
+     */
+
+    if (data.camera_data) {
+
+        console.log(
+            "Camera:",
+            data.camera_data
+        );
+
+    }
+}
+
+
+function formatUptime(seconds) {
+
+    const days = Math.floor(
+        seconds / 86400
+    );
+
+    seconds %= 86400;
+
+
+    const hours = Math.floor(
+        seconds / 3600
+    );
+
+    seconds %= 3600;
+
+
+    const minutes = Math.floor(
+        seconds / 60
+    );
+
+
+    if (days > 0) {
+
+        return `${days}g ${hours}h ${minutes}m`;
+
+    }
+
+
+    if (hours > 0) {
+
+        return `${hours}h ${minutes}m`;
+
+    }
+
+
+    return `${minutes}m`;
+}
+
+
+/*
+ * ==============================
+ * WEBSOCKET
+ * ==============================
+ */
+
+let socket;
+
+
+function connectWebSocket() {
+
+    const protocol =
+        window.location.protocol === "https:"
+            ? "wss"
+            : "ws";
+
+
+    const url =
+        `${protocol}://${window.location.host}/ws/status`;
+
+
+    console.log(
+        "Connessione WebSocket:",
+        url
+    );
+
+
+    socket = new WebSocket(url);
+
+
+    socket.onopen = () => {
+
+        console.log(
+            "WebSocket telemetria connesso"
+        );
+
+    };
+
+
+    socket.onmessage = (event) => {
+
+        try {
+
+            const data =
+                JSON.parse(event.data);
+
+
+            updateDashboard(data);
+
+        } catch (error) {
+
+            console.error(
+                "Errore parsing telemetria:",
+                error
             );
         }
-
-        const data = await response.json();
-
-        const system = data.system;
-        const robot = data.robot;
-        const components = data.components;
-        const network = data.network;
+    };
 
 
-        /*
-         * SYSTEM
-         */
+    socket.onclose = () => {
 
-        setStatus(
-            elements.cpu,
-            `${system.cpu}%`
-        );
-
-        setStatus(
-            elements.ram,
-            `${system.memory.percent}%`
-        );
-
-        setStatus(
-            elements.temperature,
-            system.temperature !== null
-                ? `${system.temperature} °C`
-                : "--"
-        );
-
-        setStatus(
-            elements.uptime,
-            system.uptime_formatted
-        );
-
-
-        /*
-         * ROBOT
-         */
-
-        setStatus(
-            elements.robotStatus,
-            robot.status === "online"
-                ? "Online"
-                : "Offline"
-        );
-
-        setStatus(
-            elements.robotMode,
-            robot.mode
-        );
-
-
-        /*
-         * COMPONENTS
-         */
-
-        setStatus(
-            elements.motorsStatus,
-            components.motors.status
-        );
-
-        setStatus(
-            elements.cameraStatus,
-            components.camera.status
-        );
-
-        setStatus(
-            elements.aiStatus,
-            components.ai.status
-        );
-
-
-        /*
-         * NETWORK
-         */
-
-        setStatus(
-            elements.networkIp,
-            network.ip
-        );
-
-
-        /*
-         * CONNECTION
-         */
-
-        if (elements.connectionStatus) {
-
-            elements.connectionStatus.textContent =
-                "ONLINE";
-
-            elements.connectionStatus.classList.add(
-                "connected"
-            );
-
-            elements.connectionStatus.classList.remove(
-                "disconnected"
-            );
-        }
-
-    } catch (error) {
-
-        console.error(
-            "Errore telemetria:",
-            error
+        console.warn(
+            "WebSocket disconnesso"
         );
 
 
@@ -165,14 +277,23 @@ async function updateDashboard() {
                 "disconnected"
             );
         }
-    }
+
+
+        setTimeout(
+            connectWebSocket,
+            2000
+        );
+    };
+
+
+    socket.onerror = (error) => {
+
+        console.error(
+            "Errore WebSocket:",
+            error
+        );
+    };
 }
 
 
-updateDashboard();
-
-
-setInterval(
-    updateDashboard,
-    2000
-);
+connectWebSocket();
