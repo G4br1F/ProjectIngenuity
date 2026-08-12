@@ -1,162 +1,178 @@
-// ======================================
-// Project Ingenuity Dashboard
-// ======================================
+const elements = {
+    cpu: document.getElementById("cpu-value"),
+    ram: document.getElementById("ram-value"),
+    temperature: document.getElementById("temperature-value"),
+    uptime: document.getElementById("uptime-value"),
 
-let socket = null;
+    robotStatus: document.getElementById("robot-status"),
+    robotMode: document.getElementById("robot-mode"),
 
-// ---------- Utility ----------
+    motorsStatus: document.getElementById("motors-status"),
+    cameraStatus: document.getElementById("camera-status"),
+    aiStatus: document.getElementById("ai-status"),
 
-function $(id) {
-    return document.getElementById(id);
-}
+    networkIp: document.getElementById("network-ip"),
 
-function setText(id, value) {
-    const el = $(id);
-    if (el) el.textContent = value;
-}
+    connectionStatus: document.getElementById("connection-status"),
+};
 
-function setProgress(id, value) {
 
-    const bar = $(id);
-    if (!bar) return;
+function setStatus(element, status) {
 
-    value = Math.max(0, Math.min(100, value));
-
-    bar.style.width = value + "%";
-
-    bar.classList.remove(
-        "bg-success",
-        "bg-warning",
-        "bg-danger"
-    );
-
-    if (value < 60)
-        bar.classList.add("bg-success");
-    else if (value < 85)
-        bar.classList.add("bg-warning");
-    else
-        bar.classList.add("bg-danger");
-}
-
-function formatUptime(seconds) {
-
-    const days = Math.floor(seconds / 86400);
-    seconds %= 86400;
-
-    const hours = Math.floor(seconds / 3600);
-    seconds %= 3600;
-
-    const minutes = Math.floor(seconds / 60);
-    seconds %= 60;
-
-    return `${days}g ${hours}h ${minutes}m ${seconds}s`;
-}
-
-function log(message) {
-
-    const area = $("system-log");
-
-    if (!area)
+    if (!element) {
         return;
+    }
 
-    const now = new Date().toLocaleTimeString();
-
-    area.innerHTML =
-        `[${now}] ${message}<br>` +
-        area.innerHTML;
-
+    element.textContent = status;
 }
 
-// ---------- Dashboard ----------
 
-function updateDashboard(data) {
+async function updateDashboard() {
 
-    // Compatibile sia con il JSON attuale
-    // sia con quello futuro (system.cpu ecc.)
+    try {
 
-    const system = data.system ?? data;
-
-    setText("cpu", system.cpu + " %");
-    setText("ram", system.ram + " %");
-    setText("disk", system.disk + " %");
-
-    if (system.temperature !== null)
-        setText("temperature", system.temperature + " °C");
-    else
-        setText("temperature", "--");
-
-    setProgress("cpu-bar", system.cpu);
-    setProgress("ram-bar", system.ram);
-    setProgress("disk-bar", system.disk);
-
-    if (system.temperature !== null)
-        setProgress("temp-bar", system.temperature);
-
-    setText("hostname", system.hostname);
-
-    setText("ip", system.ip);
-
-    setText(
-        "camera",
-        system.camera ? "🟢 Online" : "🔴 Offline"
-    );
-
-    setText(
-        "uptime",
-        formatUptime(system.uptime)
-    );
-
-    if (data.camera?.fps !== undefined)
-        setText("fps", data.camera.fps);
-
-    if (data.vision?.objects !== undefined)
-        setText(
-            "yolo",
-            data.vision.objects.length + " oggetti"
+        const response = await fetch(
+            "/api/status",
+            {
+                cache: "no-store",
+            }
         );
+
+        if (!response.ok) {
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+        }
+
+        const data = await response.json();
+
+        const system = data.system;
+        const robot = data.robot;
+        const components = data.components;
+        const network = data.network;
+
+
+        /*
+         * SYSTEM
+         */
+
+        setStatus(
+            elements.cpu,
+            `${system.cpu}%`
+        );
+
+        setStatus(
+            elements.ram,
+            `${system.memory.percent}%`
+        );
+
+        setStatus(
+            elements.temperature,
+            system.temperature !== null
+                ? `${system.temperature} °C`
+                : "--"
+        );
+
+        setStatus(
+            elements.uptime,
+            system.uptime_formatted
+        );
+
+
+        /*
+         * ROBOT
+         */
+
+        setStatus(
+            elements.robotStatus,
+            robot.status === "online"
+                ? "Online"
+                : "Offline"
+        );
+
+        setStatus(
+            elements.robotMode,
+            robot.mode
+        );
+
+
+        /*
+         * COMPONENTS
+         */
+
+        setStatus(
+            elements.motorsStatus,
+            components.motors.status
+        );
+
+        setStatus(
+            elements.cameraStatus,
+            components.camera.status
+        );
+
+        setStatus(
+            elements.aiStatus,
+            components.ai.status
+        );
+
+
+        /*
+         * NETWORK
+         */
+
+        setStatus(
+            elements.networkIp,
+            network.ip
+        );
+
+
+        /*
+         * CONNECTION
+         */
+
+        if (elements.connectionStatus) {
+
+            elements.connectionStatus.textContent =
+                "ONLINE";
+
+            elements.connectionStatus.classList.add(
+                "connected"
+            );
+
+            elements.connectionStatus.classList.remove(
+                "disconnected"
+            );
+        }
+
+    } catch (error) {
+
+        console.error(
+            "Errore telemetria:",
+            error
+        );
+
+
+        if (elements.connectionStatus) {
+
+            elements.connectionStatus.textContent =
+                "OFFLINE";
+
+            elements.connectionStatus.classList.remove(
+                "connected"
+            );
+
+            elements.connectionStatus.classList.add(
+                "disconnected"
+            );
+        }
+    }
 }
 
-// ---------- WebSocket ----------
 
-function connect() {
+updateDashboard();
 
-    const protocol =
-        location.protocol === "https:"
-            ? "wss"
-            : "ws";
 
-    socket = new WebSocket(
-        `${protocol}://${location.host}/ws/status`
-    );
-
-    socket.onopen = () => {
-
-        log("Connessione WebSocket stabilita.");
-
-    };
-
-    socket.onmessage = (event) => {
-
-        const data = JSON.parse(event.data);
-
-        updateDashboard(data);
-
-    };
-
-    socket.onclose = () => {
-
-        log("Connessione persa. Riconnessione...");
-
-        setTimeout(connect, 3000);
-
-    };
-
-    socket.onerror = () => {
-
-        socket.close();
-
-    };
-
-}
-
-window.addEventListener("load", connect);
+setInterval(
+    updateDashboard,
+    2000
+);
