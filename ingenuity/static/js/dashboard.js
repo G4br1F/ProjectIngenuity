@@ -11,9 +11,15 @@ const elements = {
     cameraStatus: document.getElementById("camera-status"),
     aiStatus: document.getElementById("ai-status"),
 
+    aiObjects: document.getElementById("ai-objects"),
+    aiInferenceFps: document.getElementById("ai-inference-fps"),
+    aiObjectList: document.getElementById("ai-object-list"),
+
     networkIp: document.getElementById("network-ip"),
 
-    connectionStatus: document.getElementById("connection-status"),
+    connectionStatus: document.getElementById(
+        "connection-status"
+    ),
 };
 
 
@@ -25,18 +31,32 @@ function setText(element, value) {
 }
 
 
+/*
+ * ======================================
+ * DASHBOARD UPDATE
+ * ======================================
+ */
+
 function updateDashboard(data) {
 
     /*
-     * ==============================
      * SYSTEM
-     * ==============================
      */
 
-    const cpu = Number(data.cpu ?? 0);
-    const ram = Number(data.ram ?? 0);
-    const temperature = data.temperature;
-    const uptime = Number(data.uptime ?? 0);
+    const cpu = Number(
+        data.cpu ?? 0
+    );
+
+    const ram = Number(
+        data.ram ?? 0
+    );
+
+    const temperature =
+        data.temperature;
+
+    const uptime = Number(
+        data.uptime ?? 0
+    );
 
 
     setText(
@@ -53,7 +73,8 @@ function updateDashboard(data) {
 
     setText(
         elements.temperature,
-        temperature !== null
+        temperature !== null &&
+        temperature !== undefined
             ? `${Number(temperature).toFixed(1)} °C`
             : "--"
     );
@@ -66,9 +87,7 @@ function updateDashboard(data) {
 
 
     /*
-     * ==============================
      * NETWORK
-     * ==============================
      */
 
     setText(
@@ -78,9 +97,7 @@ function updateDashboard(data) {
 
 
     /*
-     * ==============================
      * ROBOT
-     * ==============================
      */
 
     setText(
@@ -96,9 +113,7 @@ function updateDashboard(data) {
 
 
     /*
-     * ==============================
      * COMPONENTS
-     * ==============================
      */
 
     setText(
@@ -115,16 +130,58 @@ function updateDashboard(data) {
     );
 
 
+    /*
+     * AI / OBJECT DETECTION
+     */
+
+    const cameraData =
+        data.camera_data ?? {};
+
+    const detections =
+        Array.isArray(cameraData.objects)
+            ? cameraData.objects
+            : [];
+
+    const objectCount =
+        detections.length;
+
+    const inferenceFps =
+        Number(
+            cameraData.inference_fps ?? 0
+        );
+
+
     setText(
         elements.aiStatus,
-        "online"
+        data.camera
+            ? "online"
+            : "offline"
+    );
+
+
+    setText(
+        elements.aiObjects,
+        `${objectCount} ${
+            objectCount === 1
+                ? "oggetto"
+                : "oggetti"
+        }`
+    );
+
+
+    setText(
+        elements.aiInferenceFps,
+        `${inferenceFps.toFixed(1)} FPS`
+    );
+
+
+    updateObjectList(
+        detections
     );
 
 
     /*
-     * ==============================
      * CONNECTION
-     * ==============================
      */
 
     if (elements.connectionStatus) {
@@ -140,57 +197,139 @@ function updateDashboard(data) {
             "disconnected"
         );
     }
-
-
-    /*
-     * ==============================
-     * CAMERA / AI
-     * ==============================
-     */
-
-    if (data.camera_data) {
-
-        console.log(
-            "Camera:",
-            data.camera_data
-        );
-
-    }
 }
 
 
-function formatUptime(seconds) {
+/*
+ * ======================================
+ * OBJECT LIST
+ * ======================================
+ */
 
-    const days = Math.floor(
-        seconds / 86400
+function updateObjectList(
+    detections
+) {
+
+    if (!elements.aiObjectList) {
+        return;
+    }
+
+
+    if (detections.length === 0) {
+
+        elements.aiObjectList.textContent =
+            "Nessun oggetto rilevato";
+
+        return;
+    }
+
+
+    const names = detections.map(
+        detection => {
+
+            if (
+                typeof detection ===
+                "string"
+            ) {
+                return detection;
+            }
+
+
+            if (
+                detection &&
+                typeof detection ===
+                "object"
+            ) {
+
+                return (
+                    detection.name ??
+                    detection.class_name ??
+                    detection.label ??
+                    (
+                        detection.class_id !==
+                        undefined
+                            ? `Classe ${detection.class_id}`
+                            : "Oggetto"
+                    )
+                );
+            }
+
+
+            return "Oggetto";
+        }
     );
 
-    seconds %= 86400;
+
+    const counts = {};
 
 
-    const hours = Math.floor(
-        seconds / 3600
+    names.forEach(
+        name => {
+
+            counts[name] =
+                (counts[name] ?? 0) + 1;
+        }
     );
 
-    seconds %= 3600;
+
+    elements.aiObjectList.innerHTML =
+        Object.entries(counts)
+            .map(
+                ([name, count]) =>
+                    `<div>${name} × ${count}</div>`
+            )
+            .join("");
+}
 
 
-    const minutes = Math.floor(
-        seconds / 60
-    );
+/*
+ * ======================================
+ * UPTIME
+ * ======================================
+ */
+
+function formatUptime(
+    seconds
+) {
+
+    let remaining =
+        Math.max(
+            0,
+            Number(seconds) || 0
+        );
+
+
+    const days =
+        Math.floor(
+            remaining / 86400
+        );
+
+    remaining %= 86400;
+
+
+    const hours =
+        Math.floor(
+            remaining / 3600
+        );
+
+    remaining %= 3600;
+
+
+    const minutes =
+        Math.floor(
+            remaining / 60
+        );
 
 
     if (days > 0) {
 
         return `${days}g ${hours}h ${minutes}m`;
-
     }
 
 
     if (hours > 0) {
 
         return `${hours}h ${minutes}m`;
-
     }
 
 
@@ -199,9 +338,9 @@ function formatUptime(seconds) {
 
 
 /*
- * ==============================
+ * ======================================
  * WEBSOCKET
- * ==============================
+ * ======================================
  */
 
 let socket;
@@ -210,7 +349,8 @@ let socket;
 function connectWebSocket() {
 
     const protocol =
-        window.location.protocol === "https:"
+        window.location.protocol ===
+        "https:"
             ? "wss"
             : "ws";
 
@@ -225,7 +365,8 @@ function connectWebSocket() {
     );
 
 
-    socket = new WebSocket(url);
+    socket =
+        new WebSocket(url);
 
 
     socket.onopen = () => {
@@ -233,19 +374,24 @@ function connectWebSocket() {
         console.log(
             "WebSocket telemetria connesso"
         );
-
     };
 
 
-    socket.onmessage = (event) => {
+    socket.onmessage = (
+        event
+    ) => {
 
         try {
 
             const data =
-                JSON.parse(event.data);
+                JSON.parse(
+                    event.data
+                );
 
 
-            updateDashboard(data);
+            updateDashboard(
+                data
+            );
 
         } catch (error) {
 
@@ -264,7 +410,9 @@ function connectWebSocket() {
         );
 
 
-        if (elements.connectionStatus) {
+        if (
+            elements.connectionStatus
+        ) {
 
             elements.connectionStatus.textContent =
                 "OFFLINE";
@@ -286,7 +434,9 @@ function connectWebSocket() {
     };
 
 
-    socket.onerror = (error) => {
+    socket.onerror = (
+        error
+    ) => {
 
         console.error(
             "Errore WebSocket:",
@@ -295,5 +445,11 @@ function connectWebSocket() {
     };
 }
 
+
+/*
+ * ======================================
+ * START
+ * ======================================
+ */
 
 connectWebSocket();

@@ -43,6 +43,14 @@ class Camera:
         )
 
         # ==========================
+        # Parametri YOLO
+        # ==========================
+
+        self.yolo_width = 320
+        self.yolo_height = 180
+        self.inference_interval = 1.0
+
+        # ==========================
         # YOLO
         # ==========================
 
@@ -212,13 +220,14 @@ class Camera:
 
     def _vision_loop(self):
 
-        inference_interval = 0.33
-
         while self._running:
 
             start_time = time.time()
 
+            # --------------------------------
             # Prendiamo SOLO l'ultimo frame
+            # --------------------------------
+
             with self._lock:
 
                 frame = self.latest_frame
@@ -227,17 +236,32 @@ class Camera:
                     frame = frame.copy()
 
             if frame is None:
-
                 time.sleep(0.05)
 
                 continue
 
             # --------------------------------
-            # Inferenza
+            # Riduciamo il frame SOLO per YOLO
+            #
+            # Il video originale rimane
+            # 640x360 @ 30 FPS
+            # --------------------------------
+
+            small_frame = cv2.resize(
+                frame,
+                (
+                    self.yolo_width,
+                    self.yolo_height
+                ),
+                interpolation=cv2.INTER_AREA
+            )
+
+            # --------------------------------
+            # Inferenza YOLO
             # --------------------------------
 
             results = self.model(
-                frame,
+                small_frame,
                 conf=0.50,
                 iou=0.30,
                 verbose=False
@@ -247,10 +271,18 @@ class Camera:
 
             detections = []
 
+            # --------------------------------
+            # Fattori di scala
+            #
+            # 320x180 -> 640x360
+            # --------------------------------
+
+            scale_x = 640 / self.yolo_width
+            scale_y = 360 / self.yolo_height
+
             if result.boxes is not None:
 
                 for box in result.boxes:
-
                     confidence = float(
                         box.conf[0]
                     )
@@ -267,6 +299,16 @@ class Camera:
                         int,
                         box.xyxy[0]
                     )
+
+                    # --------------------------------
+                    # Riportiamo le coordinate
+                    # alla risoluzione originale
+                    # --------------------------------
+
+                    x1 = int(x1 * scale_x)
+                    y1 = int(y1 * scale_y)
+                    x2 = int(x2 * scale_x)
+                    y2 = int(y2 * scale_y)
 
                     detections.append({
 
@@ -286,15 +328,19 @@ class Camera:
 
                     })
 
+            # --------------------------------
+            # Calcolo FPS inferenza
+            # --------------------------------
+
             elapsed = (
-                time.time() -
-                start_time
+                    time.time() -
+                    start_time
             )
 
             if elapsed > 0:
 
                 inference_fps = (
-                    1.0 / elapsed
+                        1.0 / elapsed
                 )
 
             else:
@@ -302,7 +348,7 @@ class Camera:
                 inference_fps = 0.0
 
             # --------------------------------
-            # Salviamo SOLO il risultato YOLO
+            # Salviamo il risultato
             # --------------------------------
 
             with self._lock:
@@ -315,13 +361,17 @@ class Camera:
                     inference_fps
                 )
 
+            # --------------------------------
+            # Aspettiamo fino alla prossima
+            # inferenza
+            # --------------------------------
+
             remaining = (
-                inference_interval -
-                elapsed
+                    self.inference_interval -
+                    elapsed
             )
 
             if remaining > 0:
-
                 time.sleep(remaining)
 
     # ======================================
