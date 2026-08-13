@@ -974,3 +974,46 @@ input {
     }
 
 }
+
+/* ======================================
+   AI DETAILS
+   ====================================== */
+
+.status-row:has(.ai-details) {
+    flex-wrap: wrap;
+}
+
+.status-row .ai-details {
+    flex: 0 0 100%;
+    width: 100%;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ai-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ai-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}
+
+.ai-stat span {
+    opacity: 0.7;
+}
+
+.ai-stat strong {
+    font-weight: 600;
+}
+
+.ai-object-list {
+    margin-top: 4px;
+    line-height: 1.5;
+    opacity: 0.85;
+}
