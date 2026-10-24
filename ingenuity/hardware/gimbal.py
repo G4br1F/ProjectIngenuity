@@ -1,0 +1,91 @@
+import board
+import busio
+
+from adafruit_pca9685 import PCA9685
+
+
+class Gimbal:
+    """Controllo di due servo a rotazione continua."""
+
+    PCA_FREQUENCY = 50
+
+    PAN_CHANNEL = 0
+    TILT_CHANNEL = 1
+
+    # Neutri calibrati sui servo installati.
+    PAN_NEUTRAL_US = 1558
+    TILT_NEUTRAL_US = 1600
+
+    # Limite iniziale prudente: +/- 250 us dal neutro.
+    MAX_PULSE_OFFSET_US = 250
+
+    def __init__(self):
+        self.i2c = busio.I2C(board.SCL, board.SDA)
+
+        self.pca = PCA9685(self.i2c)
+        self.pca.frequency = self.PCA_FREQUENCY
+
+        self.pan_servo = self.pca.channels[self.PAN_CHANNEL]
+        self.tilt_servo = self.pca.channels[self.TILT_CHANNEL]
+
+        self.pan_speed = 0.0
+        self.tilt_speed = 0.0
+
+        # All'avvio inviamo i neutri calibrati.
+        self.stop()
+
+    @staticmethod
+    def _pulse_to_duty_cycle(pulse_us):
+        period_us = 1_000_000 / Gimbal.PCA_FREQUENCY
+        return round(pulse_us / period_us * 65535)
+
+    def _set_pulse(self, servo, pulse_us):
+        servo.duty_cycle = self._pulse_to_duty_cycle(pulse_us)
+
+    def _set_speed(self, servo, neutral_us, speed):
+        speed = max(-1.0, min(1.0, float(speed)))
+
+        pulse_us = (
+            neutral_us
+            + speed * self.MAX_PULSE_OFFSET_US
+        )
+
+        self._set_pulse(servo, round(pulse_us))
+
+        return speed
+
+    def pan(self, speed):
+        """Imposta la velocità PAN: -1.0 ... 0.0 ... +1.0."""
+        self.pan_speed = self._set_speed(
+            self.pan_servo,
+            self.PAN_NEUTRAL_US,
+            speed,
+        )
+
+    def tilt(self, speed):
+        """Imposta la velocità TILT: -1.0 ... 0.0 ... +1.0."""
+        self.tilt_speed = self._set_speed(
+            self.tilt_servo,
+            self.TILT_NEUTRAL_US,
+            speed,
+        )
+
+    def stop_pan(self):
+        self.pan(0.0)
+
+    def stop_tilt(self):
+        self.tilt(0.0)
+
+    def stop(self):
+        """Arresta entrambi i servo inviando i rispettivi neutri."""
+        self.stop_pan()
+        self.stop_tilt()
+
+    def center(self):
+        """Compatibilità: sui servo continui equivale ad arrestarli."""
+        self.stop()
+
+    def close(self):
+        self.stop()
+        self.pca.deinit()
+        self.i2c.deinit()

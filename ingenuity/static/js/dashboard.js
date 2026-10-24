@@ -18,7 +18,16 @@ const elements = {
     networkIp: document.getElementById("network-ip"),
 
     connectionStatus: document.getElementById(
-        "connection-status"
+        "connection-status"    
+    ),
+trackingStatus:
+    document.getElementById(
+        "tracking-status"
+    ),
+
+trackingStop:
+    document.getElementById(
+        "tracking-stop"
     ),
 };
 
@@ -179,6 +188,16 @@ function updateDashboard(data) {
         detections
     );
 
+const tracking =
+    data.tracking ?? {};
+
+const trackingMode =
+    tracking.mode ?? "IDLE";
+
+setText(
+    elements.trackingStatus,
+    trackingMode
+);
 
     /*
      * CONNECTION
@@ -206,81 +225,136 @@ function updateDashboard(data) {
  * ======================================
  */
 
-function updateObjectList(
-    detections
-) {
+
+function updateObjectList(detections) {
 
     if (!elements.aiObjectList) {
         return;
     }
 
-
     if (detections.length === 0) {
 
-        elements.aiObjectList.textContent =
-            "Nessun oggetto rilevato";
+        elements.aiObjectList.innerHTML =
+            `<div class="ai-empty">
+                Nessun oggetto rilevato
+            </div>`;
 
         return;
     }
 
-
-    const names = detections.map(
-        detection => {
-
-            if (
-                typeof detection ===
-                "string"
-            ) {
-                return detection;
-            }
-
-
-            if (
-                detection &&
-                typeof detection ===
-                "object"
-            ) {
-
-                return (
-                    detection.name ??
-                    detection.class_name ??
-                    detection.label ??
-                    (
-                        detection.class_id !==
-                        undefined
-                            ? `Classe ${detection.class_id}`
-                            : "Oggetto"
-                    )
-                );
-            }
-
-
-            return "Oggetto";
-        }
-    );
-
-
-    const counts = {};
-
-
-    names.forEach(
-        name => {
-
-            counts[name] =
-                (counts[name] ?? 0) + 1;
-        }
-    );
-
-
     elements.aiObjectList.innerHTML =
-        Object.entries(counts)
-            .map(
-                ([name, count]) =>
-                    `<div>${name} × ${count}</div>`
-            )
-            .join("");
-}
+        detections.map((detection, index) => {
 
+            const name =
+                detection?.class ??
+                "Oggetto";
+
+            const confidence =
+                Number(
+                    detection?.confidence ?? 0
+                );
+
+            const percentage =
+                (confidence * 100).toFixed(1);
+
+            return `
+                <div class="ai-object-item">
+
+                    <div class="ai-object-info">
+
+                        <strong>
+                            ${name}
+                        </strong>
+
+                        <span>
+                            ${percentage}%
+                        </span>
+
+                    </div>
+
+                    <button
+                        type="button"
+                        class="tracking-button"
+                        data-detection-index="${index}"
+                    >
+                        SEGUI
+                    </button>
+
+                </div>
+            `;
+
+        }).join("");
+
+    attachTrackingButtons();
+}
+function attachTrackingButtons() {
+
+    const buttons =
+        document.querySelectorAll(
+            ".tracking-button"
+        );
+
+    buttons.forEach(button => {
+
+        button.addEventListener(
+            "click",
+            async () => {
+
+                const index =
+                    Number(
+                        button.dataset.detectionIndex
+                    );
+
+                try {
+
+                    const response =
+                        await fetch(
+                            "/api/tracking/select",
+                            {
+                                method: "POST",
+
+                                headers: {
+                                    "Content-Type":
+                                        "application/json"
+                                },
+
+                                body: JSON.stringify({
+                                    index: index
+                                })
+                            }
+                        );
+
+                    const data =
+                        await response.json();
+
+                    if (!response.ok) {
+
+                        console.error(
+                            "Errore selezione:",
+                            data
+                        );
+
+                        return;
+                    }
+
+                    console.log(
+                        "Target selezionato:",
+                        data
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "Errore tracking:",
+                        error
+                    );
+                }
+
+            }
+        );
+
+    });
+}
 
 /*
  * ======================================
@@ -445,11 +519,61 @@ function connectWebSocket() {
     };
 }
 
+async function stopTracking() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/tracking/stop",
+                {
+                    method: "POST"
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+
+            console.error(
+                "Errore STOP:",
+                data
+            );
+
+            return;
+        }
+
+        setText(
+            elements.trackingStatus,
+            "IDLE"
+        );
+
+        console.log(
+            "Tracking fermato"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Errore STOP tracking:",
+            error
+        );
+    }
+}
 
 /*
  * ======================================
  * START
  * ======================================
  */
+
+if (elements.trackingStop) {
+
+    elements.trackingStop.addEventListener(
+        "click",
+        stopTracking
+    );
+}
 
 connectWebSocket();

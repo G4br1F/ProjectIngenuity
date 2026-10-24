@@ -19,7 +19,9 @@ from ingenuity.auth.authentication import (
 from ingenuity.core.system_monitor import SystemMonitor
 from ingenuity.vision.camera import Camera
 from ingenuity.web.websocket import status_socket
-
+from ingenuity.hardware.gimbal import Gimbal
+from ingenuity.hardware.pan_tracker import PanTracker
+from ingenuity.vision.tracking import TrackingManager
 
 # ======================================
 # Environment
@@ -45,6 +47,15 @@ app = FastAPI(
 
 camera = Camera()
 
+gimbal = Gimbal()
+
+tracking_manager = TrackingManager()
+
+pan_tracker = PanTracker(
+    camera,
+    gimbal,
+    tracking_manager,
+)
 
 # ======================================
 # Templates
@@ -185,7 +196,71 @@ async def api_status():
     return JSONResponse(
         content=SystemMonitor.get_status()
     )
+@app.post("/api/tracking/select")
+async def tracking_select(request: Request):
 
+    data = await request.json()
+
+    index = data.get("index")
+
+    if not isinstance(index, int):
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "Indice target non valido",
+            },
+            status_code=400,
+        )
+
+    detections = camera.get_detections()
+
+    try:
+
+        state = tracking_manager.select(
+            detections,
+            index,
+        )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "tracking": state,
+            }
+        )
+
+    except ValueError as error:
+
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": str(error),
+            },
+            status_code=400,
+        )
+
+
+@app.post("/api/tracking/stop")
+async def tracking_stop():
+
+    state = tracking_manager.stop()
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "tracking": state,
+        }
+    )
+
+
+@app.get("/api/tracking/status")
+async def tracking_status():
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "tracking": tracking_manager.snapshot(),
+        }
+    )
 
 # ======================================
 # Webcam stream
@@ -219,7 +294,8 @@ async def websocket_status(
     websocket: WebSocket,
 ):
 
-    await status_socket(
-        websocket,
-        camera,
-    )
+	await status_socket(
+		websocket,
+		camera,
+    		tracking_manager,
+	)

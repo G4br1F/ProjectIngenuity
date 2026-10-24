@@ -1,0 +1,175 @@
+import threading
+import time
+
+
+class PanTracker:
+
+    IMAGE_WIDTH = 960
+
+    # Zona centrale in cui non correggiamo il PAN
+    DEADBAND = 40
+
+    # Guadagno: errore pixel -> gradi servo
+    GAIN = 0.015
+
+    # Massima correzione per ogni nuova detection
+    MAX_STEP = 3.0
+
+    PAN_MIN = 10
+    PAN_MAX = 170
+
+    # Se la direzione risultasse invertita, cambiamo
+    # questo valore in -1.
+    PAN_DIRECTION = 1
+
+    def __init__(self, camera, gimbal, tracker):
+
+        self.camera = camera
+        self.gimbal = gimbal
+        self.tracker = tracker
+
+        self._running = True
+
+        # Ultima inferenza YOLO elaborata
+        self._last_detection_version = -1
+
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+        )
+
+        self._thread.start()
+
+    def _loop(self):
+
+        while self._running:
+
+            try:
+
+                state = self.tracker.snapshot()
+
+                # Nessun comando di tracking:
+                # non muoviamo assolutamente il gimbal.
+                if state["mode"] != "TRACKING":
+
+                    time.sleep(0.05)
+                    continue
+
+                version = (
+                    self.camera.get_detection_version()
+                )
+
+                # Non elaborare nuovamente la stessa
+                # inferenza YOLO.
+                if version == self._last_detection_version:
+
+                    time.sleep(0.02)
+                    continue
+
+                self._last_detection_version = version
+
+                detections = self.camera.get_detections()
+
+                state = self.tracker.update(
+                    detections
+                )
+
+                # Target perso:
+                # nessun movimento.
+                if state["mode"] != "TRACKING":
+
+                    continue
+
+                target = state["target"]
+
+                if target is None:
+                    continue
+
+                target_x = target["center"][0]
+
+                image_center_x = (
+                    self.IMAGE_WIDTH / 2
+                )
+
+                error_x = (
+                    target_x -
+                    image_center_x
+                )
+
+                # Target sufficientemente vicino
+                # al centro.
+                if abs(error_x) <= self.DEADBAND:
+
+                    print(
+                        f"[PAN] "
+                        f"TARGET CENTRATO "
+                        f"X={target_x}"
+                    )
+
+                    continue
+
+                # Correzione proporzionale.
+                correction = (
+                    error_x *
+                    self.GAIN *
+                    self.PAN_DIRECTION
+                )
+
+                # Limita la correzione.
+                correction = max(
+                    -self.MAX_STEP,
+                    min(
+                        self.MAX_STEP,
+                        correction,
+                    ),
+                )
+
+                current_angle = (
+                    self.gimbal.pan_angle
+                )
+
+                new_angle = (
+                    current_angle +
+                    correction
+                )
+
+                # Limiti meccanici/software.
+                new_angle = max(
+                    self.PAN_MIN,
+                    min(
+                        self.PAN_MAX,
+                        new_angle,
+                    ),
+                )
+
+                # Muoviamo SOLO il PAN.
+                self.gimbal.pan(
+                    new_angle
+                )
+
+                print(
+                    f"[PAN] "
+                    f"target_x={target_x} "
+                    f"error={error_x:+.0f} "
+                    f"{current_angle:.1f}° -> "
+                    f"{new_angle:.1f}°"
+                )
+
+            except Exception as error:
+
+                print(
+                    f"[PAN TRACKER] "
+                    f"Errore: {error}"
+                )
+
+            time.sleep(0.02)
+
+    def stop(self):
+
+        self._running = False
+
+        if self._thread.is_alive():
+
+            self._thread.join(
+                timeout=1.0
+            )

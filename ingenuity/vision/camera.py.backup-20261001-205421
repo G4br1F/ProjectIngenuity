@@ -1,0 +1,510 @@
+import cv2
+import threading
+import time
+from pathlib import Path
+
+from picamera2 import Picamera2
+from ultralytics import YOLO
+
+
+class Camera:
+
+    # ==========================
+    # Video
+    # ==========================
+
+    VIDEO_WIDTH = 960
+    VIDEO_HEIGHT = 540
+    VIDEO_FPS = 20.0
+    JPEG_QUALITY = 80
+
+    # ==========================
+    # YOLO
+    # ==========================
+
+    YOLO_WIDTH = 320
+    YOLO_HEIGHT = 180
+    INFERENCE_INTERVAL = 1.0
+
+    def __init__(self):
+
+        # ==========================
+        # Camera Module 3 / IMX708
+        # ==========================
+
+        self.picam2 = Picamera2()
+
+        frame_duration_us = int(
+            1_000_000 / self.VIDEO_FPS
+        )
+
+        camera_config = self.picam2.create_preview_configuration(
+            main={
+                "size": (
+                    self.VIDEO_WIDTH,
+                    self.VIDEO_HEIGHT,
+                ),
+                "format": "BGR888",
+            },
+            controls={
+                "FrameDurationLimits": (
+                    frame_duration_us,
+                    frame_duration_us,
+                )
+            },
+            buffer_count=4,
+        )
+
+        self.picam2.configure(camera_config)
+        self.picam2.start()
+
+        # Tempo per la stabilizzazione automatica della camera.
+        time.sleep(1)
+
+        # ==========================
+        # YOLO
+        # ==========================
+
+        project_root = Path(__file__).resolve().parents[2]
+        model_path = project_root / "yolo26n_ncnn_model"
+
+        self.model = YOLO(
+            str(model_path),
+            task="detect",
+        )
+
+        # ==========================
+        # Stato
+        # ==========================
+
+        self.latest_frame = None
+        self.latest_yolo_frame = None
+        self.latest_jpeg = None
+
+        self.frame_id = 0
+
+        self.latest_detections = []
+
+        self.camera_fps = 0.0
+        self.inference_fps = 0.0
+
+        self._lock = threading.Lock()
+        self._running = True
+
+        # ==========================
+        # Thread camera
+        # ==========================
+
+        self._capture_thread = threading.Thread(
+            target=self._capture_loop,
+            name="camera-capture",
+            daemon=True,
+        )
+
+        # ==========================
+        # Thread YOLO
+        # ==========================
+
+        self._vision_thread = threading.Thread(
+            target=self._vision_loop,
+            name="camera-yolo",
+            daemon=True,
+        )
+
+        self._capture_thread.start()
+        self._vision_thread.start()
+
+    # ======================================
+    # ACQUISIZIONE CAMERA
+    # ======================================
+
+    def _capture_loop(self):
+
+        previous_time = time.monotonic()
+        next_yolo_time = previous_time
+
+        while self._running:
+
+            try:
+                # BGR888 viene fornito direttamente da Picamera2.
+                # Evitiamo cvtColor() su ogni frame.
+                frame = self.picam2.capture_array("main")
+            except Exception:
+                if self._running:
+                    time.sleep(0.02)
+                continue
+
+            now = time.monotonic()
+
+            delta = now - previous_time
+
+            if delta > 0:
+                fps = 1.0 / delta
+            else:
+                fps = 0.0
+
+            previous_time = now
+
+            # --------------------------------
+            # YOLO riceve soltanto uno snapshot
+            # ogni INFERENCE_INTERVAL.
+            #
+            # Il video non aspetta mai YOLO.
+            # --------------------------------
+
+            yolo_frame = None
+
+            if now >= next_yolo_time:
+
+                yolo_frame = frame.copy()
+
+                next_yolo_time = (
+                    now + self.INFERENCE_INTERVAL
+                )
+
+            with self._lock:
+
+                self.camera_fps = fps
+
+                if yolo_frame is not None:
+                    self.latest_yolo_frame = yolo_frame
+
+                detections = list(
+                    self.latest_detections
+                )
+
+            # --------------------------------
+            # Disegno detection sul frame
+            # corrente, quindi le bounding box
+            # non introducono latenza video.
+            # --------------------------------
+
+            for detection in detections:
+
+                x1, y1, x2, y2 = detection["box"]
+
+                class_name = detection["class"]
+                confidence = detection["confidence"]
+
+                cv2.rectangle(
+                    frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (0, 255, 0),
+                    2,
+                )
+
+                label = (
+                    f"{class_name} "
+                    f"{confidence:.0%}"
+                )
+
+                cv2.putText(
+                    frame,
+                    label,
+                    (
+                        x1,
+                        max(y1 - 10, 20),
+                    ),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            # --------------------------------
+            # JPEG
+            #
+            # Conserviamo solamente l'ultimo
+            # JPEG disponibile: nessuna coda,
+            # quindi niente accumulo di ritardo.
+            # --------------------------------
+
+            success, buffer = cv2.imencode(
+                ".jpg",
+                frame,
+                (
+                    cv2.IMWRITE_JPEG_QUALITY,
+                    self.JPEG_QUALITY,
+                ),
+            )
+
+            if not success:
+                continue
+
+            jpeg = buffer.tobytes()
+
+            with self._lock:
+
+                self.latest_frame = frame
+                self.latest_jpeg = jpeg
+                self.frame_id += 1
+
+    # ======================================
+    # YOLO
+    # ======================================
+
+    def _vision_loop(self):
+
+        while self._running:
+
+            start_time = time.monotonic()
+
+            # --------------------------------
+            # Prendiamo esclusivamente l'ultimo
+            # snapshot disponibile.
+            # --------------------------------
+
+            with self._lock:
+
+                frame = self.latest_yolo_frame
+                self.latest_yolo_frame = None
+
+            if frame is None:
+
+                time.sleep(0.02)
+
+                continue
+
+            # --------------------------------
+            # Resize esclusivamente per YOLO.
+            # Il video resta 960x540.
+            # --------------------------------
+
+            small_frame = cv2.resize(
+                frame,
+                (
+                    self.YOLO_WIDTH,
+                    self.YOLO_HEIGHT,
+                ),
+                interpolation=cv2.INTER_AREA,
+            )
+
+            # --------------------------------
+            # Inferenza
+            # --------------------------------
+
+            results = self.model(
+                small_frame,
+                conf=0.50,
+                iou=0.30,
+                verbose=False,
+            )
+
+            result = results[0]
+            detections = []
+
+            scale_x = (
+                self.VIDEO_WIDTH /
+                self.YOLO_WIDTH
+            )
+
+            scale_y = (
+                self.VIDEO_HEIGHT /
+                self.YOLO_HEIGHT
+            )
+
+            if result.boxes is not None:
+
+                for box in result.boxes:
+
+                    confidence = float(
+                        box.conf[0]
+                    )
+
+                    class_id = int(
+                        box.cls[0]
+                    )
+
+                    class_name = (
+                        self.model.names[class_id]
+                    )
+
+                    x1, y1, x2, y2 = map(
+                        int,
+                        box.xyxy[0],
+                    )
+
+                    x1 = max(
+                        0,
+                        min(
+                            self.VIDEO_WIDTH - 1,
+                            int(x1 * scale_x),
+                        ),
+                    )
+
+                    y1 = max(
+                        0,
+                        min(
+                            self.VIDEO_HEIGHT - 1,
+                            int(y1 * scale_y),
+                        ),
+                    )
+
+                    x2 = max(
+                        0,
+                        min(
+                            self.VIDEO_WIDTH - 1,
+                            int(x2 * scale_x),
+                        ),
+                    )
+
+                    y2 = max(
+                        0,
+                        min(
+                            self.VIDEO_HEIGHT - 1,
+                            int(y2 * scale_y),
+                        ),
+                    )
+
+                    detections.append(
+                        {
+                            "class": class_name,
+                            "confidence": round(
+                                confidence,
+                                3,
+                            ),
+                            "box": [
+                                x1,
+                                y1,
+                                x2,
+                                y2,
+                            ],
+                        }
+                    )
+
+            # --------------------------------
+            # Tempo di inferenza
+            # --------------------------------
+
+            elapsed = (
+                time.monotonic() -
+                start_time
+            )
+
+            inference_fps = (
+                1.0 / elapsed
+                if elapsed > 0
+                else 0.0
+            )
+
+            with self._lock:
+
+                self.latest_detections = detections
+                self.inference_fps = inference_fps
+
+            # --------------------------------
+            # Manteniamo una cadenza stabile
+            # senza accumulare ritardo.
+            # --------------------------------
+
+            remaining = (
+                self.INFERENCE_INTERVAL -
+                elapsed
+            )
+
+            if remaining > 0:
+
+                time.sleep(remaining)
+
+    # ======================================
+    # STREAM MJPEG
+    # ======================================
+
+    def frames(self):
+
+        last_frame_id = -1
+
+        while self._running:
+
+            with self._lock:
+
+                jpeg = self.latest_jpeg
+                current_frame_id = self.frame_id
+
+            if (
+                jpeg is None
+                or current_frame_id == last_frame_id
+            ):
+
+                time.sleep(0.002)
+
+                continue
+
+            last_frame_id = current_frame_id
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: "
+                + str(len(jpeg)).encode()
+                + b"\r\n"
+                b"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                b"Pragma: no-cache\r\n"
+                b"\r\n"
+                + jpeg
+                + b"\r\n"
+            )
+
+    # ======================================
+    # DETECTION
+    # ======================================
+
+    def get_detections(self):
+
+        with self._lock:
+
+            return list(
+                self.latest_detections
+            )
+
+    # ======================================
+    # CAMERA FPS
+    # ======================================
+
+    def get_camera_fps(self):
+
+        with self._lock:
+
+            return round(
+                self.camera_fps,
+                1,
+            )
+
+    # ======================================
+    # YOLO FPS
+    # ======================================
+
+    def get_inference_fps(self):
+
+        with self._lock:
+
+            return round(
+                self.inference_fps,
+                1,
+            )
+
+    # ======================================
+    # STOP
+    # ======================================
+
+    def stop(self):
+
+        if not self._running:
+            return
+
+        self._running = False
+
+        self._capture_thread.join(
+            timeout=2.0
+        )
+
+        self._vision_thread.join(
+            timeout=2.0
+        )
+
+        try:
+            self.picam2.stop()
+        finally:
+            self.picam2.close()

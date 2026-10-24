@@ -1,0 +1,62 @@
+diff --git a/ingenuity/web/server.py b/ingenuity/web/server.py
+--- a/ingenuity/web/server.py
++++ b/ingenuity/web/server.py
+@@ -1,5 +1,6 @@
+ from dotenv import load_dotenv
+ 
+-from fastapi import FastAPI, Request, WebSocket
++from fastapi import FastAPI, HTTPException, Request, WebSocket
++from pydantic import BaseModel
+ from fastapi.responses import (
+     JSONResponse,
+     RedirectResponse,
+@@ -16,6 +17,7 @@ from ingenuity.auth.authentication import (
+ from ingenuity.core.system_monitor import SystemMonitor
+ from ingenuity.vision.camera import Camera
++from ingenuity.vision.tracking import TrackingManager
+ from ingenuity.web.websocket import status_socket
+ 
+@@ -36,6 +38,11 @@ app = FastAPI(
+ # ======================================
+ 
+ camera = Camera()
++tracking = TrackingManager()
++
++
++class TrackingSelection(BaseModel):
++    index: int
+ 
+ 
+ # ======================================
+@@ -145,6 +152,38 @@ async def api_status():
+     )
+ 
+ 
++# ======================================
++# Explicit target selection (vision only)
++# ======================================
++
++@app.get("/api/tracking")
++async def tracking_status():
++    return tracking.update(camera.get_detections())
++
++
++@app.post("/api/tracking/select")
++async def select_tracking(selection: TrackingSelection):
++    try:
++        return tracking.select(
++            camera.get_detections(),
++            selection.index,
++        )
++    except ValueError as error:
++        raise HTTPException(status_code=400, detail=str(error)) from error
++
++
++@app.post("/api/tracking/stop")
++async def stop_tracking():
++    return tracking.stop()
++
++
+ # ======================================
+ # Webcam stream
+ # ======================================

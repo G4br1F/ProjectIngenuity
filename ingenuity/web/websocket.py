@@ -7,8 +7,9 @@ from ingenuity.core.system_monitor import SystemMonitor
 
 
 async def status_socket(
-    websocket: WebSocket,
-    camera
+    websocket,
+    camera,
+    tracking_manager,
 ):
 
     await websocket.accept()
@@ -22,8 +23,12 @@ async def status_socket(
             status["camera_data"] = {
                 "fps": camera.get_camera_fps(),
                 "inference_fps": camera.get_inference_fps(),
-                "objects": camera.get_detections()
+                "objects": camera.get_detections(),
             }
+
+            status["tracking"] = (
+                tracking_manager.snapshot()
+            )
 
             await websocket.send_text(
                 json.dumps(status)
@@ -35,5 +40,6 @@ async def status_socket(
 
         try:
             await websocket.close()
+
         except Exception:
             pass
