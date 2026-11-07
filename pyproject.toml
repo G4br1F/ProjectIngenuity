@@ -1,10 +1,30 @@
-[project]
-name = "project-atlas"
-version = "0.1.0"
-description = "Autonomous Rover based on Raspberry Pi"
-requires-python = ">=3.11"
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
+[project]
+name = "project-ingenuity"
+version = "0.2.0"
+description = "Dashboard and bounded gimbal tracking for Raspberry Pi"
+requires-python = ">=3.11"
 dependencies = [
-    "opencv-python",
-    "numpy"
+  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "Jinja2>=3.1,<4",
+  "python-multipart>=0.0.18,<1", "python-dotenv>=1,<2",
+  "python-jose[cryptography]>=3.5,<4", "argon2-cffi>=23,<26",
+  "psutil>=6,<8"
 ]
+
+[project.optional-dependencies]
+vision = ["ultralytics>=8.4,<9", "ncnn>=1.0", "opencv-python>=4.10,<6", "numpy>=1.26,<3", "PyYAML>=6,<7"]
+hardware = ["Adafruit-Blinka>=8,<9", "adafruit-circuitpython-pca9685>=3,<4"]
+test = ["pytest>=8,<10", "httpx>=0.27,<1", "opencv-python>=4.10,<6", "numpy>=1.26,<3", "PyYAML>=6,<7"]
+
+[tool.setuptools.packages.find]
+include = ["ingenuity*", "app*"]
+
+[tool.setuptools.package-data]
+ingenuity = ["templates/*.html", "static/css/*.css", "static/js/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["."]

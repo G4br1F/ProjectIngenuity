@@ -1,20 +1,30 @@
-from ingenuity.vision.camera_manager import CameraManager
+"""Manual hardware diagnostic; invoke explicitly."""
 
-camera = CameraManager()
+def main():
+    from ingenuity.vision.camera_manager import CameraManager
 
-count = 0
+    camera = CameraManager()
 
-while True:
+    count = 0
 
-    frame = camera.read()
+    try:
+        while True:
 
-    if frame is None:
-        print("Errore")
-        break
+            frame = camera.read()
 
-    count += 1
+            if frame is None:
+                print("Errore")
+                break
 
-    if count % 100 == 0:
-        print(f"{count} frame acquisiti")
+            count += 1
 
-camera.release()
+            if count % 100 == 0:
+                print(f"{count} frame acquisiti")
+
+    finally:
+        camera.release()
+
+
+
+if __name__ == "__main__":
+    main()

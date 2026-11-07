@@ -1,17 +1,18 @@
+"""Manual check using the calibrated continuous-servo driver."""
 import time
-import board
-import busio
-from adafruit_pca9685 import PCA9685
+from ingenuity.hardware.gimbal import Gimbal
 
-i2c = busio.I2C(board.SCL, board.SDA)
-pca = PCA9685(i2c)
-pca.frequency = 50
+def main():
+    from dotenv import load_dotenv
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    gimbal = Gimbal()
+    try:
+        gimbal.stop()
+        print("Neutri calibrati su PAN=0 e TILT=1; osservazione per 10 secondi")
+        time.sleep(10)
+    finally:
+        gimbal.close()
 
-pan = pca.channels[0]
-
-def set_pulse(pulse_us):
-    pan.duty_cycle = round(pulse_us / 20000 * 65535)
-
-print("PAN: verifica neutro a 1545 us per 10 secondi")
-set_pulse(1545)
-time.sleep(10)
+if __name__ == "__main__":
+    main()

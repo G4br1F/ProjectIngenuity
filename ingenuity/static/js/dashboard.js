@@ -1,579 +1,129 @@
-const elements = {
-    cpu: document.getElementById("cpu-value"),
-    ram: document.getElementById("ram-value"),
-    temperature: document.getElementById("temperature-value"),
-    uptime: document.getElementById("uptime-value"),
+/* Versioned selections: never use an index against a different detection batch. */
+const byId = id => document.getElementById(id);
+const setText = (id, text) => { const el = byId(id); if (el) el.textContent = text; };
+let displayedVersion = -1;
+let renderedKey = null;
+let lastMessage = 0;
+let reconnectTimer;
+let socket;
+let closing = false;
 
-    robotStatus: document.getElementById("robot-status"),
-    robotMode: document.getElementById("robot-mode"),
-
-    motorsStatus: document.getElementById("motors-status"),
-    cameraStatus: document.getElementById("camera-status"),
-    aiStatus: document.getElementById("ai-status"),
-
-    aiObjects: document.getElementById("ai-objects"),
-    aiInferenceFps: document.getElementById("ai-inference-fps"),
-    aiObjectList: document.getElementById("ai-object-list"),
-
-    networkIp: document.getElementById("network-ip"),
-
-    connectionStatus: document.getElementById(
-        "connection-status"    
-    ),
-trackingStatus:
-    document.getElementById(
-        "tracking-status"
-    ),
-
-trackingStop:
-    document.getElementById(
-        "tracking-stop"
-    ),
-};
-
-
-function setText(element, value) {
-
-    if (element) {
-        element.textContent = value;
+function message(text) { setText('tracking-message', text); }
+function connection(online) {
+    setText('connection-status', online ? 'ONLINE' : 'OFFLINE');
+    byId('connection-status')?.classList.toggle('connected', online);
+    byId('connection-status')?.classList.toggle('disconnected', !online);
+    if (!online) {
+        renderedKey = null;
+        setText('robot-status', 'Offline');
+        setText('camera-status', 'stato sconosciuto');
+        setText('ai-status', 'stato sconosciuto');
+        document.querySelectorAll('.tracking-button').forEach(b => { b.disabled = true; });
     }
 }
-
-
-/*
- * ======================================
- * DASHBOARD UPDATE
- * ======================================
- */
-
-function updateDashboard(data) {
-
-    /*
-     * SYSTEM
-     */
-
-    const cpu = Number(
-        data.cpu ?? 0
-    );
-
-    const ram = Number(
-        data.ram ?? 0
-    );
-
-    const temperature =
-        data.temperature;
-
-    const uptime = Number(
-        data.uptime ?? 0
-    );
-
-
-    setText(
-        elements.cpu,
-        `${cpu.toFixed(1)}%`
-    );
-
-
-    setText(
-        elements.ram,
-        `${ram.toFixed(1)}%`
-    );
-
-
-    setText(
-        elements.temperature,
-        temperature !== null &&
-        temperature !== undefined
-            ? `${Number(temperature).toFixed(1)} °C`
-            : "--"
-    );
-
-
-    setText(
-        elements.uptime,
-        formatUptime(uptime)
-    );
-
-
-    /*
-     * NETWORK
-     */
-
-    setText(
-        elements.networkIp,
-        data.ip ?? "--"
-    );
-
-
-    /*
-     * ROBOT
-     */
-
-    setText(
-        elements.robotStatus,
-        "Online"
-    );
-
-
-    setText(
-        elements.robotMode,
-        "manual"
-    );
-
-
-    /*
-     * COMPONENTS
-     */
-
-    setText(
-        elements.motorsStatus,
-        "standby"
-    );
-
-
-    setText(
-        elements.cameraStatus,
-        data.camera
-            ? "online"
-            : "offline"
-    );
-
-
-    /*
-     * AI / OBJECT DETECTION
-     */
-
-    const cameraData =
-        data.camera_data ?? {};
-
-    const detections =
-        Array.isArray(cameraData.objects)
-            ? cameraData.objects
-            : [];
-
-    const objectCount =
-        detections.length;
-
-    const inferenceFps =
-        Number(
-            cameraData.inference_fps ?? 0
-        );
-
-
-    setText(
-        elements.aiStatus,
-        data.camera
-            ? "online"
-            : "offline"
-    );
-
-
-    setText(
-        elements.aiObjects,
-        `${objectCount} ${
-            objectCount === 1
-                ? "oggetto"
-                : "oggetti"
-        }`
-    );
-
-
-    setText(
-        elements.aiInferenceFps,
-        `${inferenceFps.toFixed(1)} FPS`
-    );
-
-
-    updateObjectList(
-        detections
-    );
-
-const tracking =
-    data.tracking ?? {};
-
-const trackingMode =
-    tracking.mode ?? "IDLE";
-
-setText(
-    elements.trackingStatus,
-    trackingMode
-);
-
-    /*
-     * CONNECTION
-     */
-
-    if (elements.connectionStatus) {
-
-        elements.connectionStatus.textContent =
-            "ONLINE";
-
-        elements.connectionStatus.classList.add(
-            "connected"
-        );
-
-        elements.connectionStatus.classList.remove(
-            "disconnected"
-        );
+async function trackingRequest(path, body) {
+    const response = await fetch(path, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    if (response.status === 401) {
+        window.location.assign('/login');
+        throw new Error('Sessione scaduta');
     }
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Richiesta non valida');
+    return data;
 }
-
-
-/*
- * ======================================
- * OBJECT LIST
- * ======================================
- */
-
-
-function updateObjectList(detections) {
-
-    if (!elements.aiObjectList) {
+function updateObjects(camera, tracking) {
+    const container = byId('ai-object-list');
+    if (!container) return;
+    const key = `${camera.version}:${camera.ai_online}:${tracking.actuation}`;
+    if (key === renderedKey) return;
+    renderedKey = key;
+    container.replaceChildren();
+    const detections = Array.isArray(camera.objects) ? camera.objects : [];
+    displayedVersion = camera.version;
+    if (!detections.length) {
+        container.textContent = 'Nessun oggetto rilevato';
         return;
     }
-
-    if (detections.length === 0) {
-
-        elements.aiObjectList.innerHTML =
-            `<div class="ai-empty">
-                Nessun oggetto rilevato
-            </div>`;
-
-        return;
-    }
-
-    elements.aiObjectList.innerHTML =
-        detections.map((detection, index) => {
-
-            const name =
-                detection?.class ??
-                "Oggetto";
-
-            const confidence =
-                Number(
-                    detection?.confidence ?? 0
-                );
-
-            const percentage =
-                (confidence * 100).toFixed(1);
-
-            return `
-                <div class="ai-object-item">
-
-                    <div class="ai-object-info">
-
-                        <strong>
-                            ${name}
-                        </strong>
-
-                        <span>
-                            ${percentage}%
-                        </span>
-
-                    </div>
-
-                    <button
-                        type="button"
-                        class="tracking-button"
-                        data-detection-index="${index}"
-                    >
-                        SEGUI
-                    </button>
-
-                </div>
-            `;
-
-        }).join("");
-
-    attachTrackingButtons();
-}
-function attachTrackingButtons() {
-
-    const buttons =
-        document.querySelectorAll(
-            ".tracking-button"
-        );
-
-    buttons.forEach(button => {
-
-        button.addEventListener(
-            "click",
-            async () => {
-
-                const index =
-                    Number(
-                        button.dataset.detectionIndex
-                    );
-
-                try {
-
-                    const response =
-                        await fetch(
-                            "/api/tracking/select",
-                            {
-                                method: "POST",
-
-                                headers: {
-                                    "Content-Type":
-                                        "application/json"
-                                },
-
-                                body: JSON.stringify({
-                                    index: index
-                                })
-                            }
-                        );
-
-                    const data =
-                        await response.json();
-
-                    if (!response.ok) {
-
-                        console.error(
-                            "Errore selezione:",
-                            data
-                        );
-
-                        return;
-                    }
-
-                    console.log(
-                        "Target selezionato:",
-                        data
-                    );
-
-                } catch (error) {
-
-                    console.error(
-                        "Errore tracking:",
-                        error
-                    );
-                }
-
-            }
-        );
-
+    detections.forEach((detection, index) => {
+        const row = document.createElement('div');
+        row.className = 'ai-object-item';
+        const label = document.createElement('span');
+        label.textContent = `${detection.class} ${(Number(detection.confidence) * 100).toFixed(1)}%`;
+        const button = document.createElement('button');
+        button.className = 'tracking-button';
+        button.type = 'button';
+        button.textContent = 'SEGUI';
+        button.disabled = !camera.ai_online || tracking.actuation !== 'enabled';
+        const version = displayedVersion;
+        button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                const result = await trackingRequest('/api/tracking/select', {index, version});
+                setText('tracking-status', result.tracking.mode);
+                message('Bersaglio selezionato');
+            } catch (error) { message(error.message); }
+        });
+        row.append(label, button);
+        container.append(row);
     });
 }
-
-/*
- * ======================================
- * UPTIME
- * ======================================
- */
-
-function formatUptime(
-    seconds
-) {
-
-    let remaining =
-        Math.max(
-            0,
-            Number(seconds) || 0
-        );
-
-
-    const days =
-        Math.floor(
-            remaining / 86400
-        );
-
-    remaining %= 86400;
-
-
-    const hours =
-        Math.floor(
-            remaining / 3600
-        );
-
-    remaining %= 3600;
-
-
-    const minutes =
-        Math.floor(
-            remaining / 60
-        );
-
-
-    if (days > 0) {
-
-        return `${days}g ${hours}h ${minutes}m`;
+function updateDashboard(data) {
+    lastMessage = Date.now();
+    connection(true);
+    setText('cpu-value', `${Number(data.cpu).toFixed(1)}%`);
+    setText('ram-value', `${Number(data.ram).toFixed(1)}%`);
+    setText('temperature-value', data.temperature == null ? '--' : `${Number(data.temperature).toFixed(1)} °C`);
+    const seconds = Math.max(0, Number(data.uptime) || 0);
+    setText('uptime-value', `${Math.floor(seconds / 86400)}g ${Math.floor(seconds / 3600) % 24}h ${Math.floor(seconds / 60) % 60}m`);
+    setText('network-ip', data.ip ?? '--');
+    setText('robot-status', 'Online');
+    const tracking = data.tracking ?? {};
+    const camera = data.camera_data ?? {};
+    setText('robot-mode', tracking.mode === 'TRACKING' ? 'tracking' : 'manual');
+    setText('motors-status', tracking.pan_speed || tracking.tilt_speed ? 'gimbal in movimento' : 'standby');
+    setText('camera-status', camera.online ? 'online' : 'offline');
+    byId('camera-status')?.classList.toggle('status-ok', Boolean(camera.online));
+    setText('ai-status', camera.ai_online ? 'online' : 'offline');
+    setText('ai-objects', `${camera.objects?.length ?? 0} oggetti`);
+    setText('ai-inference-fps', `${Number(camera.inference_fps ?? 0).toFixed(1)} FPS`);
+    setText('tracking-status', tracking.mode ?? 'IDLE');
+    if (tracking.reason || tracking.error || camera.ai_error || camera.camera_error) {
+        message(tracking.reason || tracking.error || camera.ai_error || camera.camera_error);
     }
-
-
-    if (hours > 0) {
-
-        return `${hours}h ${minutes}m`;
-    }
-
-
-    return `${minutes}m`;
+    updateObjects(camera, tracking);
 }
-
-
-/*
- * ======================================
- * WEBSOCKET
- * ======================================
- */
-
-let socket;
-
-
 function connectWebSocket() {
-
-    const protocol =
-        window.location.protocol ===
-        "https:"
-            ? "wss"
-            : "ws";
-
-
-    const url =
-        `${protocol}://${window.location.host}/ws/status`;
-
-
-    console.log(
-        "Connessione WebSocket:",
-        url
-    );
-
-
-    socket =
-        new WebSocket(url);
-
-
-    socket.onopen = () => {
-
-        console.log(
-            "WebSocket telemetria connesso"
-        );
+    if (closing) return;
+    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/status`);
+    socket.onmessage = event => {
+        try { updateDashboard(JSON.parse(event.data)); }
+        catch (error) { message(`Telemetria non valida: ${error.message}`); }
     };
-
-
-    socket.onmessage = (
-        event
-    ) => {
-
-        try {
-
-            const data =
-                JSON.parse(
-                    event.data
-                );
-
-
-            updateDashboard(
-                data
-            );
-
-        } catch (error) {
-
-            console.error(
-                "Errore parsing telemetria:",
-                error
-            );
-        }
+    socket.onclose = event => {
+        connection(false);
+        if (event.code === 1008) { location.assign('/login'); return; }
+        if (!closing) reconnectTimer = setTimeout(connectWebSocket, 2000);
     };
-
-
-    socket.onclose = () => {
-
-        console.warn(
-            "WebSocket disconnesso"
-        );
-
-
-        if (
-            elements.connectionStatus
-        ) {
-
-            elements.connectionStatus.textContent =
-                "OFFLINE";
-
-            elements.connectionStatus.classList.remove(
-                "connected"
-            );
-
-            elements.connectionStatus.classList.add(
-                "disconnected"
-            );
-        }
-
-
-        setTimeout(
-            connectWebSocket,
-            2000
-        );
-    };
-
-
-    socket.onerror = (
-        error
-    ) => {
-
-        console.error(
-            "Errore WebSocket:",
-            error
-        );
-    };
+    socket.onerror = () => socket.close();
 }
-
-async function stopTracking() {
-
+byId('tracking-stop')?.addEventListener('click', async () => {
     try {
-
-        const response =
-            await fetch(
-                "/api/tracking/stop",
-                {
-                    method: "POST"
-                }
-            );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            console.error(
-                "Errore STOP:",
-                data
-            );
-
-            return;
-        }
-
-        setText(
-            elements.trackingStatus,
-            "IDLE"
-        );
-
-        console.log(
-            "Tracking fermato"
-        );
-
-    } catch (error) {
-
-        console.error(
-            "Errore STOP tracking:",
-            error
-        );
-    }
-}
-
-/*
- * ======================================
- * START
- * ======================================
- */
-
-if (elements.trackingStop) {
-
-    elements.trackingStop.addEventListener(
-        "click",
-        stopTracking
-    );
-}
-
+        const result = await trackingRequest('/api/tracking/stop');
+        setText('tracking-status', result.tracking.mode);
+        message('Gimbal fermata');
+    } catch (error) { message(`STOP non confermato: ${error.message}`); }
+});
+const watchdog = setInterval(() => {
+    if (!lastMessage || Date.now() - lastMessage > 3000) connection(false);
+}, 1000);
+window.addEventListener('pagehide', () => {
+    closing = true;
+    clearInterval(watchdog);
+    clearTimeout(reconnectTimer);
+    socket?.close();
+});
+connection(false);
 connectWebSocket();

@@ -556,7 +556,7 @@ input {
 .camera-view {
     width: 100%;
 
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 16 / 9;
 
     overflow: hidden;
 
@@ -937,7 +937,7 @@ input {
     }
 
     .sidebar-bottom {
-        display: none;
+        display: block;
     }
 
     .main {
@@ -970,7 +970,7 @@ input {
     }
 
     .camera-view {
-        aspect-ratio: 4 / 3;
+        aspect-ratio: 16 / 9;
     }
 
 }
@@ -1017,3 +1017,8 @@ input {
     line-height: 1.5;
     opacity: 0.85;
 }
+
+.tracking-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+#tracking-message { flex-basis:100%; overflow-wrap:anywhere; }
+.tracking-button:disabled { opacity:.5; cursor:not-allowed; }
+.ai-object-item { display:flex; justify-content:space-between; gap:12px; padding:6px 0; }

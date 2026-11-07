@@ -1,22 +1,35 @@
-from ingenuity.vision.camera_manager import CameraManager
-from ingenuity.vision.capture import Capture
-import cv2
+"""Manual hardware diagnostic; invoke explicitly."""
 
-camera = CameraManager()
-capture = Capture()
+def main():
+    from ingenuity.vision.camera_manager import CameraManager
+    from ingenuity.vision.capture import Capture
+    import cv2
 
-while True:
-    frame = camera.read()
+    camera = CameraManager()
+    capture = Capture()
 
-    cv2.imshow("Capture Test", frame)
+    try:
+        while True:
+            frame = camera.read()
 
-    key = cv2.waitKey(1)
+            if frame is None:
+                raise RuntimeError("Acquisizione camera fallita")
 
-    if key == ord("s"):
-        capture.save(frame)
+            cv2.imshow("Capture Test", frame)
 
-    if key == ord("q"):
-        break
+            key = cv2.waitKey(1)
 
-camera.release()
-cv2.destroyAllWindows()
+            if key == ord("s"):
+                capture.save(frame)
+
+            if key == ord("q"):
+                break
+
+    finally:
+        camera.release()
+        cv2.destroyAllWindows()
+
+
+
+if __name__ == "__main__":
+    main()

@@ -1,65 +1,42 @@
-import os
+"""Nonblocking telemetry, sampled at most once per second across clients."""
 import socket
+import threading
 import time
-
 import psutil
 
 
 class SystemMonitor:
-
-    @staticmethod
-    def get_cpu():
-        return round(psutil.cpu_percent(interval=0.1), 1)
-
-    @staticmethod
-    def get_ram():
-        return round(psutil.virtual_memory().percent, 1)
-
-    @staticmethod
-    def get_disk():
-        return round(psutil.disk_usage("/").percent, 1)
-
-    @staticmethod
-    def get_uptime():
-        return int(time.time() - psutil.boot_time())
-
-    @staticmethod
-    def get_hostname():
-        return socket.gethostname()
+    _lock = threading.Lock()
+    _cached = {}
+    _sampled = -1.0
 
     @staticmethod
     def get_ip():
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            return "N/D"
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(('8.8.8.8',80))
+                return sock.getsockname()[0]
+        except OSError:
+            return 'N/D'
 
     @staticmethod
     def get_temperature():
         try:
-            with open("/sys/class/thermal/thermal_zone0/temp") as f:
-                temp = int(f.read()) / 1000
-            return round(temp, 1)
-        except Exception:
+            with open('/sys/class/thermal/thermal_zone0/temp') as file:
+                return round(int(file.read())/1000,1)
+        except (OSError, ValueError):
             return None
-
-    @staticmethod
-    def camera_connected():
-        return os.path.exists("/dev/video0")
 
     @classmethod
     def get_status(cls):
-        return {
-            "cpu": cls.get_cpu(),
-            "ram": cls.get_ram(),
-            "disk": cls.get_disk(),
-            "temperature": cls.get_temperature(),
-            "uptime": cls.get_uptime(),
-            "hostname": cls.get_hostname(),
-            "ip": cls.get_ip(),
-            "camera": cls.camera_connected()
-        }
+        with cls._lock:
+            now = time.monotonic()
+            if now-cls._sampled >= 1:
+                cls._cached = {'cpu': round(psutil.cpu_percent(interval=None),1),
+                               'ram': round(psutil.virtual_memory().percent,1),
+                               'disk': round(psutil.disk_usage('/').percent,1),
+                               'temperature': cls.get_temperature(),
+                               'uptime': int(time.time()-psutil.boot_time()),
+                               'hostname': socket.gethostname(), 'ip': cls.get_ip()}
+                cls._sampled = now
+            return dict(cls._cached)
