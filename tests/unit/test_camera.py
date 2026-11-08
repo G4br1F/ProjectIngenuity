@@ -116,3 +116,19 @@ def test_capture_failure_invalidates_detections(monkeypatch):
         assert camera.get_detection_snapshot()['captured_at'] is None
         assert not camera.get_status()['online']
     finally:camera.stop()
+
+
+def test_selection_history_is_bounded_and_copies_exact_batch():
+    from collections import deque
+    camera=Camera.__new__(Camera)
+    camera._condition=threading.Condition()
+    camera._selection_history=deque(maxlen=32)
+    for version in range(40):
+        camera._batch={'version':version,'captured_at':time.monotonic(),
+                       'objects':[{'class':str(version)}],'size':[960,540]}
+        camera.get_detection_snapshot()
+    assert len(camera._selection_history)==32
+    assert camera.get_selection_snapshot(20)['objects'][0]['class']=='20'
+    copy=camera.get_selection_snapshot(20);copy['objects'].clear()
+    assert camera.get_selection_snapshot(20)['objects']
+    with pytest.raises(ValueError):camera.get_selection_snapshot(0)

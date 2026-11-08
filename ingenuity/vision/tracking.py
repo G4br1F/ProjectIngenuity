@@ -16,6 +16,7 @@ class TrackingManager:
         self._last_seen = None
         self._version = -1
         self._reason = None
+        self._lost_at = None
 
     def _fresh(self, batch, now):
         stamp = batch.get('captured_at')
@@ -24,8 +25,10 @@ class TrackingManager:
     def select(self, batch, index, version, now=None):
         now = time.monotonic() if now is None else now
         with self._lock:
-            if version != batch['version'] or not self._fresh(batch, now):
-                raise ValueError('Detection scadute: attendi il prossimo aggiornamento e seleziona di nuovo')
+            if version != batch['version']:
+                raise ValueError('Lista aggiornata: seleziona nuovamente il bersaglio')
+            if not self._fresh(batch, now):
+                raise ValueError('Detection troppo vecchia: attendi una nuova osservazione')
             if type(index) is not int or not 0 <= index < len(batch['objects']):
                 raise ValueError('Indice target non valido')
             target = batch['objects'][index]
@@ -36,12 +39,14 @@ class TrackingManager:
             self._version = version
             self._last_seen = batch['captured_at']
             self._reason = None
+            self._lost_at = None
             return self.snapshot()
 
     def stop(self):
         with self._lock:
             self._mode, self._target, self._last_seen = 'IDLE', None, None
             self._reason = None
+            self._lost_at = None
             return self.snapshot()
 
     def update(self, batch, now=None):
@@ -50,12 +55,14 @@ class TrackingManager:
             if self._mode == 'IDLE' or self._target is None:
                 return self.snapshot()
             if not self._fresh(batch, now):
+                if self._lost_at is None:
+                    self._lost_at = now
                 self._mode, self._reason = 'LOST', 'stale_detection'
                 return self.snapshot()
             if batch['version'] == self._version:
                 return self.snapshot()
             self._version = batch['version']
-            if self._mode == 'LOST' and now - self._last_seen > self.reacquire_for:
+            if self._mode == 'LOST' and self._lost_at is not None and now - self._lost_at > self.reacquire_for:
                 self._reason = 'reselect_required'
                 return self.snapshot()
             x, y = self._target['center']
@@ -78,12 +85,15 @@ class TrackingManager:
             # Do not guess between two similarly plausible objects of the same class.
             ambiguous = len(candidates) > 1 and candidates[1][0] - candidates[0][0] < 25
             if not candidates or ambiguous:
+                if self._lost_at is None:
+                    self._lost_at = now
                 self._mode = 'LOST'
                 self._reason = 'ambiguous_target' if ambiguous else 'target_missing'
             else:
                 self._target = deepcopy(candidates[0][1])
                 self._last_seen = batch['captured_at']
                 self._mode, self._reason = 'TRACKING', None
+                self._lost_at = None
             return self.snapshot()
 
     def snapshot(self):

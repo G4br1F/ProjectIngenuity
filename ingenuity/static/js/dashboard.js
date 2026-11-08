@@ -65,6 +65,7 @@ function updateObjects(camera, tracking) {
                 setText('tracking-status', result.tracking.mode);
                 message('Bersaglio selezionato');
             } catch (error) { message(error.message); }
+            finally { if (button.isConnected) button.disabled = false; }
         });
         row.append(label, button);
         container.append(row);
@@ -83,13 +84,16 @@ function updateDashboard(data) {
     const tracking = data.tracking ?? {};
     const camera = data.camera_data ?? {};
     setText('robot-mode', tracking.mode === 'TRACKING' ? 'tracking' : 'manual');
-    setText('motors-status', tracking.pan_speed || tracking.tilt_speed ? 'gimbal in movimento' : 'standby');
+    setText('motors-status', tracking.pan_speed || tracking.tilt_speed ? 'comando movimento attivo' : 'standby');
     setText('camera-status', camera.online ? 'online' : 'offline');
     byId('camera-status')?.classList.toggle('status-ok', Boolean(camera.online));
     setText('ai-status', camera.ai_online ? 'online' : 'offline');
     setText('ai-objects', `${camera.objects?.length ?? 0} oggetti`);
     setText('ai-inference-fps', `${Number(camera.inference_fps ?? 0).toFixed(1)} FPS`);
     setText('tracking-status', tracking.mode ?? 'IDLE');
+    if (tracking.mode === 'TRACKING' && !tracking.reason && !tracking.error && !camera.ai_error && !camera.camera_error) {
+        message('Inseguimento attivo');
+    }
     if (tracking.reason || tracking.error || camera.ai_error || camera.camera_error) {
         message(tracking.reason || tracking.error || camera.ai_error || camera.camera_error);
     }

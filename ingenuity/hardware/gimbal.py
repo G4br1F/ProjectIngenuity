@@ -7,7 +7,7 @@ import threading
 class Gimbal:
     PCA_FREQUENCY = 50
     PAN_CHANNEL, TILT_CHANNEL = 0, 1
-    PAN_NEUTRAL_US, TILT_NEUTRAL_US = 1558, 1600
+    PAN_NEUTRAL_US, TILT_NEUTRAL_US = 1500, 1500
     MAX_PULSE_OFFSET_US = 250
 
     def __init__(self):
@@ -24,7 +24,7 @@ class Gimbal:
         self.i2c = busio.I2C(board.SCL, board.SDA)
         self.pca = None
         try:
-            self.pca = PCA9685(self.i2c)
+            self.pca = PCA9685(self.i2c, reference_clock_speed=27_750_000)
             self.pca.frequency = self.PCA_FREQUENCY
             self.pan_servo = self.pca.channels[self.PAN_CHANNEL]
             self.tilt_servo = self.pca.channels[self.TILT_CHANNEL]
@@ -47,7 +47,8 @@ class Gimbal:
             raise ValueError('Velocità servo richiesta nell’intervallo [-1, 1], non un angolo')
         if self._closed:
             raise RuntimeError('Gimbal chiuso')
-        servo.duty_cycle = self._pulse_to_duty_cycle(round(neutral_us + speed*self.MAX_PULSE_OFFSET_US))
+        servo.duty_cycle = (0 if speed == 0 else round(
+            (neutral_us + speed*self.MAX_PULSE_OFFSET_US) * self.pca.frequency * 65535 / 1_000_000))
         return speed
 
     def pan(self, speed):

@@ -7,18 +7,21 @@ import logging
 import os
 import threading
 import time
+from ingenuity.vision.tracking import TrackingManager
 
 log = logging.getLogger(__name__)
 
 
 class PanTracker:
-    PERIOD = 0.02
+    PERIOD = 0.005
     MAX_SPEED = 0.10
     MIN_SPEED = 0.025
     ACCELERATION = 0.5
     ENTER_DEADBAND = 0.06
     EXIT_DEADBAND = 0.09
-    MAX_PULSE_SECONDS = 0.18
+    MAX_PULSE_SECONDS = 0.060
+    MIN_PULSE_SECONDS = 0.025
+    SETTLE_SECONDS = 0.060
 
     def __init__(self, camera, gimbal, tracker, *, autostart=True, clock=time.monotonic,
                  pan_direction=None, tilt_direction=None, tilt_enabled=None):
@@ -34,6 +37,9 @@ class PanTracker:
         self._thread = None
         self._last_version = -1
         self._pulse_until = 0.0
+        self._observe_after = float("-inf")
+        self._pulse_active = False
+        self._last_pan_sign = 0
         self._last_step = self.clock()
         self._centered = [True, True]
         self._speed = [0.0, 0.0]
@@ -48,19 +54,35 @@ class PanTracker:
 
     def select(self, index, version):
         with self._lock:
-            # Stop first, including when a stale selection is rejected.
+            now = self.clock()
+            current = self.camera.get_detection_snapshot()
+            resolver = getattr(self.camera, 'get_selection_snapshot', None)
+            selected = resolver(version) if resolver else current
+            # Validate and associate on a temporary tracker; rejected clicks leave
+            # the existing target and pulse untouched.
+            candidate = TrackingManager(self.tracker.max_distance,
+                                        self.tracker.stale_after, self.tracker.reacquire_for)
+            candidate.select(selected, index, version, now)
+            state = candidate.update(current, now)
+            if state['mode'] != 'TRACKING':
+                raise ValueError('Bersaglio assente, ambiguo o scaduto: seleziona di nuovo')
+            index_now = next(i for i, item in enumerate(current['objects'])
+                             if item == state['target'])
             self._halt()
-            self.tracker.stop()
+            self.tracker.select(current, index_now, current['version'], now)
+            self._pulse_active = False
             self._pulse_until = 0.0
-            self._last_version = -1
+            self._observe_after = now + self.SETTLE_SECONDS
+            self._last_version = current['version']
+            self._last_pan_sign = 0
             self._centered = [True, True]
-            self.tracker.select(self.camera.get_detection_snapshot(), index, version, self.clock())
             return self.snapshot()
 
     def stop_tracking(self):
         with self._lock:
             self.tracker.stop()
             self._pulse_until = 0.0
+            self._pulse_active = False
             self._halt()
             return self.snapshot()
 
@@ -78,6 +100,8 @@ class PanTracker:
         # Cross through neutral rather than abruptly reversing.
         if desired * previous < 0:
             return 0.0
+        if axis == 0:
+            return 0.20 if desired > 0 else -0.40
         step = self.ACCELERATION * dt
         return max(previous-step, min(previous+step, desired))
 
@@ -91,21 +115,49 @@ class PanTracker:
             self._last_step = now
             batch = self.camera.get_detection_snapshot()
             state = self.tracker.update(batch, now)
-            if state['mode'] != 'TRACKING':
-                self._halt()
-                return
-            if batch['version'] != self._last_version:
-                self._last_version = batch['version']
-                # Observation age includes inference time, not only publication time.
-                self._pulse_until = min(now+self.MAX_PULSE_SECONDS,
-                                        batch['captured_at']+self.tracker.stale_after)
-            if now >= self._pulse_until:
-                self._halt()
-                return
             width, height = batch['size']
+            if state['mode'] != 'TRACKING':
+                if self._pulse_active:
+                    self._observe_after = now + self.SETTLE_SECONDS
+                self._pulse_active = False
+                self._halt()
+                return
             x, y = state['target']['center']
-            pan = self._command((x-width/2)/(width/2), 0, dt)
+            error = (x-width/2)/(width/2)
+            if self._pulse_active:
+                # Never extend a movement because another inference finished.
+                crossed = error * self._pulse_error < 0
+                if now >= self._pulse_until or abs(error) <= self.ENTER_DEADBAND or crossed:
+                    self._halt()
+                    self._pulse_active = False
+                    self._observe_after = now + self.SETTLE_SECONDS
+                return
+            if (batch['version'] == self._last_version or
+                    batch['captured_at'] < self._observe_after):
+                self._halt()
+                return
+            self._last_version = batch['version']
+            pan = self._command(error, 0, dt)
             tilt = self._command((y-height/2)/(height/2), 1, dt) if self.tilt_enabled else 0.0
+            if pan == 0 and tilt == 0:
+                self._halt()
+                return
+            # Effective servo commands with proportional duration instead of a
+            # ramp trapped inside the servo's dead zone.
+            scale = min(1.0, max(0.0, (abs(error)-self.ENTER_DEADBAND)/0.60))
+            duration = self.MIN_PULSE_SECONDS + scale*(self.MAX_PULSE_SECONDS-self.MIN_PULSE_SECONDS)
+            sign = 1 if pan > 0 else -1 if pan < 0 else 0
+            if sign and self._last_pan_sign and sign != self._last_pan_sign:
+                duration = self.MIN_PULSE_SECONDS
+            if sign:
+                self._last_pan_sign = sign
+            deadline = batch['captured_at'] + self.tracker.stale_after
+            if deadline-now < duration:
+                self._halt()
+                return
+            self._pulse_until = now + duration
+            self._pulse_error = error
+            self._pulse_active = True
             self.gimbal.pan(pan)
             self.gimbal.tilt(tilt)
             self._speed = [pan, tilt]

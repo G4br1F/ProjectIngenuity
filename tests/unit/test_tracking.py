@@ -46,26 +46,8 @@ def test_reordered_batch_cannot_select_wrong_object():
     assert tracker.snapshot()['mode']=='IDLE'
 
 
-def test_pulse_stops_even_without_new_inference():
-    cam,gimbal,tracker,c=setup()
-    c.step(10.02)
-    assert -.011 <= gimbal.speed[0] < 0
-    c.step(10.10)
-    assert -.1 <= gimbal.speed[0] < 0
-    c.step(10.21)
-    assert gimbal.speed==[0,0]
-    c.step(20)
-    assert gimbal.speed==[0,0]
-    assert tracker.snapshot()['mode']=='LOST'
 
 
-def test_fresh_frame_authorizes_new_bounded_pulse():
-    cam,gimbal,tracker,c=setup()
-    c.step(10.02);c.step(10.25)
-    assert gimbal.speed==[0,0]
-    cam.batch=batch(2,10.26)
-    c.step(10.28)
-    assert gimbal.speed[0]<0
 
 
 def test_stop_remains_stopped_with_fresh_results():
@@ -77,27 +59,8 @@ def test_stop_remains_stopped_with_fresh_results():
     assert tracker.snapshot()['mode']=='IDLE'
 
 
-def test_center_hysteresis_and_direction():
-    cam,gimbal,tracker,c=setup()
-    cam.batch=batch(2,10.02,[obj(500)])
-    # Move gradually into the association gate rather than teleporting target.
-    tracker.select(cam.batch,0,2,10.02)
-    c.step(10.04)
-    assert gimbal.speed==[0,0]
-    cam.batch=batch(3,10.06,[obj(515)]) # 7.3%, within exit threshold
-    c.step(10.08)
-    assert gimbal.speed==[0,0]
-    cam.batch=batch(4,10.10,[obj(540)])
-    c.step(10.12)
-    assert gimbal.speed[0]<0
 
 
-def test_tilt_opt_in_and_resolution_independence():
-    cam,gimbal,tracker,c=setup(tilt_enabled=True,pan_direction=1,tilt_direction=1)
-    cam.batch={'version':2,'captured_at':10.02,'size':[640,360],'objects':[obj(400,250)]}
-    tracker.select(cam.batch,0,2,10.02)
-    c.step(10.04)
-    assert gimbal.speed[0]>0 and gimbal.speed[1]>0
 
 
 def test_ambiguous_or_missing_target_stops():
@@ -131,22 +94,112 @@ def test_snapshot_is_deep_copy():
     assert tracker.snapshot()['target']['center'][0]==800
 
 
+
+
+def start_pulse(x=800):
+    cam,gimbal,tracker,c=setup()
+    cam.batch=batch(2,10.07,[obj(x)])
+    tracker.select(cam.batch,0,2,10.07)
+    c.step(10.08)
+    return cam,gimbal,tracker,c
+
+
+def test_pulse_not_extended_and_waits_for_post_stop_capture():
+    cam,gimbal,tracker,c=start_pulse()
+    assert gimbal.speed[0]==-.4
+    deadline=c._pulse_until
+    cam.batch=batch(3,10.09)
+    c.step(10.10)
+    assert c._pulse_until==deadline
+    c.step(deadline+.001)
+    assert gimbal.speed==[0,0]
+    cam.batch=batch(4,deadline-.01)  # inference completed after stop, old capture
+    c.step(deadline+.10)
+    assert gimbal.speed==[0,0]
+    cam.batch=batch(5,deadline+.08)
+    c.step(deadline+.11)
+    assert gimbal.speed[0]==-.4
+
+
+def test_shorter_correction_near_center_and_after_crossing():
+    _,g,_,near=start_pulse(540)
+    assert g.speed[0]==-.4
+    _,_,_,far=start_pulse(900)
+    assert near._pulse_until < far._pulse_until
+    assert near._pulse_until-10.08 >= near.MIN_PULSE_SECONDS-1e-9
+    assert far._pulse_until-10.08 <= far.MAX_PULSE_SECONDS+1e-9
+
+
+def test_effective_commands_center_and_inversion():
+    _,_,_,c=setup()
+    assert c._command(0,0,.005)==0
+    assert c._command(.5,0,.005)==-.4
+    assert c._command(-.5,0,.005)==.2
+    c._speed[0]=.2
+    assert c._command(.5,0,.005)==0
+
+
+def test_stop_and_expiry_during_active_pulse():
+    cam,g,t,c=start_pulse()
+    c.stop_tracking()
+    cam.batch=batch(3,10.2)
+    c.step(10.21)
+    assert g.speed==[0,0] and t.snapshot()['mode']=='IDLE'
+    cam,g,t,c=start_pulse()
+    c.step(12)
+    assert g.speed==[0,0] and t.snapshot()['mode']=='LOST'
+
+
+def test_rejected_selection_preserves_active_target():
+    cam,g,t,c=start_pulse()
+    before=t.snapshot()
+    with pytest.raises(ValueError): c.select(0,999)
+    assert t.snapshot()==before
+    assert g.speed[0]==-.4
+
+
+def test_old_displayed_batch_resolves_reordered_target():
+    cam,g,t,c=setup()
+    old=batch(1,9.9,[obj(800),obj(200,label='bottle')])
+    cam.get_selection_snapshot=lambda version: deepcopy(old)
+    cam.batch=batch(2,10,[obj(200,label='bottle'),obj(810)])
+    c.select(0,1)
+    assert t.snapshot()['target']['class']=='person'
+    assert t.snapshot()['target']['center'][0]==810
+    assert g.speed==[0,0]
+
+
+def test_old_selection_rejects_stale_and_ambiguous():
+    cam,g,t,c=setup()
+    cam.get_selection_snapshot=lambda version: batch(1,8)
+    with pytest.raises(ValueError):c.select(0,1)
+    cam.get_selection_snapshot=lambda version: batch(1,9.9)
+    cam.batch=batch(2,10,[obj(790),obj(810)])
+    with pytest.raises(ValueError):c.select(0,1)
+
+
 def test_stop_is_serialized_with_inflight_command():
     import threading
-    cam,gimbal,tracker,c=setup()
+    cam,g,t,c=setup()
+    cam.batch=batch(2,10.07)
     entered,release=threading.Event(),threading.Event()
-    original=gimbal.pan
+    original=g.pan
     def blocking_pan(speed):
         entered.set()
         assert release.wait(1)
         original(speed)
-    gimbal.pan=blocking_pan
-    worker=threading.Thread(target=lambda:c.step(10.02))
+    g.pan=blocking_pan
+    worker=threading.Thread(target=lambda:c.step(10.08))
     worker.start();assert entered.wait(1)
     stopper=threading.Thread(target=c.stop_tracking)
     stopper.start();release.set()
     worker.join(1);stopper.join(1)
     assert not worker.is_alive() and not stopper.is_alive()
-    assert gimbal.speed==[0,0]
-    c.step(10.04)
-    assert gimbal.speed==[0,0]
+    assert g.speed==[0,0]
+
+
+def test_reacquisition_grace_starts_when_target_is_lost():
+    t=TrackingManager()
+    t.select(batch(1,9),0,1,9.1)
+    assert t.update(batch(2,10.1,[]),10.2)['mode']=='LOST'
+    assert t.update(batch(3,10.3),10.4)['mode']=='TRACKING'

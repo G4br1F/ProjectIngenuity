@@ -83,3 +83,31 @@ node --check ingenuity/static/js/dashboard.js
 La suite predefinita è `tests/unit/`: camera, modello e gimbal simulati, autenticazione HTTP/WebSocket, selezioni obsolete, timeout, isteresi, STOP, pulizia risorse e salvataggio foto. Non apre periferiche reali. La convalida su IMX708, NCNN ARM64 e servi resta un passaggio distinto.
 
 Documentazione di riferimento: [Picamera2](https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf), [Ultralytics predict](https://docs.ultralytics.com/modes/predict/), [export NCNN](https://docs.ultralytics.com/modes/export/), [FastAPI lifespan](https://fastapi.tiangolo.com/advanced/events/).
+
+
+### Calibrazione hardware verificata il 8 novembre 2026
+
+Sul PCA9685 di questo robot il clock di riferimento e impostato a 27.750.000 Hz:
+con il valore nominale di 25 MHz un impulso richiesto da 1500 us misurava circa
+1350 us. La misura Arduino dopo correzione e circa 1494–1501 us. Entrambi i servo
+sono fermi a 1500 us. STOP disabilita il PWM, comportamento verificato sui servo
+installati; non garantisce coppia di mantenimento o arresto in caso di bus guasto.
+Questa calibrazione e specifica dell'hardware, non universale.
+
+Il pan usa 1550 us nel verso positivo e 1400 us nel negativo. La durata e
+proporzionale all'errore, da 25 a 60 ms, e torna al minimo dopo un'inversione.
+Ogni movimento termina senza estensioni dovute a nuove detection. Prima di un
+altro movimento serve un'immagine acquisita almeno 60 ms dopo l'arresto.
+La zona centrale e l'isteresi restano attive. Le temporizzazioni dipendono dallo
+scheduling Linux: non sono un arresto hardware garantito. Tilt disabilitato di
+default: non e stata misurata la sua risposta nei due versi.
+
+SEGUI risolve l'indice nel lotto originale mostrato dalla dashboard (storico
+limitato a 32 lotti), ne verifica la freschezza e associa il bersaglio al lotto
+corrente per classe, posizione e dimensioni. Rifiuta associazioni ambigue e dati
+scaduti, senza annullare un inseguimento gia attivo. Nessun retry automatico
+applica lo stesso indice a un lotto diverso. La grazia di riaggancio decorre dalla
+perdita del bersaglio, non dall'acquisizione dell'ultima immagine valida.
+
+Validazione software: test con clock, camera e servo simulati. Il controllo a
+impulsi brevi richiede ancora verifica fisica di verso, overshoot e STOP sul robot.

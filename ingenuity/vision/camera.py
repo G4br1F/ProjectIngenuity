@@ -1,5 +1,6 @@
 """Single-owner Picamera2 capture, clean inference frames and shared JPEGs."""
 from copy import deepcopy
+from collections import deque
 import logging
 import math
 import os
@@ -20,6 +21,7 @@ class Camera:
         import cv2
         self.cv2 = cv2
         self._condition = threading.Condition()
+        self._selection_history = deque(maxlen=32)
         self._stop_event = threading.Event()
         self._threads = []
         self._closed = False
@@ -184,9 +186,21 @@ class Camera:
     def get_detection_snapshot(self):
         with self._condition:
             batch = deepcopy(self._batch)
+            if not self._selection_history or self._selection_history[-1]['version'] != batch['version']:
+                self._selection_history.append(deepcopy(batch))
             if batch['captured_at'] is None or time.monotonic()-batch['captured_at'] > self.STALE_AFTER:
                 batch['objects'] = []
             return batch
+
+    def get_selection_snapshot(self, version):
+        """Resolve an index only against the exact batch shown to the user."""
+        with self._condition:
+            for batch in reversed(self._selection_history):
+                if batch['version'] == version:
+                    return deepcopy(batch)
+            if self._batch['version'] == version:
+                return deepcopy(self._batch)
+        raise ValueError('Selezione non piu disponibile: scegli un oggetto aggiornato')
 
     def get_detections(self):
         return self.get_detection_snapshot()['objects']
