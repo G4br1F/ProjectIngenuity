@@ -263,7 +263,7 @@ def test_servo_stays_stopped_through_detection_dropout():
 
 
 @pytest.mark.parametrize('offset',[60,180,420])
-def test_clockwise_duration_reduced_without_changing_anticlockwise(offset):
+def test_directional_duration_limits(offset):
     _,g_cw,_,cw=start_pulse(480-offset)
     _,g_ccw,_,ccw=start_pulse(480+offset)
     assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.4
@@ -271,7 +271,7 @@ def test_clockwise_duration_reduced_without_changing_anticlockwise(offset):
     cw_duration=cw._pulse_until-10.08
     assert cw_duration==pytest.approx(max(.020,.75*ccw_duration))
     scale=min(1,max(0,(offset/480-.06)/.60))
-    assert ccw_duration==pytest.approx(.025+scale*(.060-.025))
+    assert ccw_duration==pytest.approx(.020+scale*(.035-.020))
 
 
 def test_alternating_center_noise_never_authorizes_pan():
@@ -308,3 +308,16 @@ def test_center_measurement_clears_previous_motion_evidence():
     assert c._stable_pan_error(-.2) is None
     assert c._stable_pan_error(-.2) is None
     assert c._stable_pan_error(-.2)==-.2
+
+
+@pytest.mark.parametrize('x',[60,240,420,540,720,900])
+def test_small_corrections_stop_without_replaying_same_detection(x):
+    cam,g,t,c=start_pulse(x)
+    duration=c._pulse_until-10.08
+    limit=.02625 if g.speed[0]>0 else .035
+    assert .020-1e-9 <= duration <= limit+1e-9
+    c.step(c._pulse_until+.001)
+    assert g.speed==[0,0]
+    for now in [10.2,10.3,10.4]:
+        c.step(now)
+        assert g.speed==[0,0]

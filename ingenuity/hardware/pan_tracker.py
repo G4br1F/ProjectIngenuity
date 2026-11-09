@@ -21,8 +21,8 @@ class PanTracker:
     ACCELERATION = 0.5
     ENTER_DEADBAND = 0.06
     EXIT_DEADBAND = 0.09
-    MAX_PULSE_SECONDS = 0.060
-    MIN_PULSE_SECONDS = 0.025
+    MAX_PULSE_SECONDS = 0.035
+    MIN_PULSE_SECONDS = 0.020
     SETTLE_SECONDS = 0.060
 
     def __init__(self, camera, gimbal, tracker, *, autostart=True, clock=time.monotonic,

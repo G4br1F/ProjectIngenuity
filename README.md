@@ -133,3 +133,13 @@ due piu lontano. La stessa versione non viene contata due volte. STOP, perdita
 e fine movimento azzerano le evidenze; un attraversamento del centro ripristina
 l'isteresi di uscita. La zona centrale non viene allargata. Il filtro aggiunge
 latenza dipendente dagli FPS di inferenza e deve essere verificato sul robot.
+
+
+### Taratura a passi piu piccoli
+
+Durata aggiornata: 20–35 ms in senso antiorario (1400 us) e 20–26,25 ms
+in senso orario (1550 us). Restano la conferma temporale delle detection,
+l'attesa di 60 ms dopo l'arresto e la richiesta di una nuova immagine successiva
+all'attesa. Nessun movimento viene prolungato dall'arrivo di altre detection.
+Questi sono tempi richiesti al software, non misure dello spostamento angolare:
+la risposta meccanica e i ritardi dello scheduling vanno verificati sul robot.
