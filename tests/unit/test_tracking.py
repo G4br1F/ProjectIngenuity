@@ -100,6 +100,9 @@ def start_pulse(x=800):
     cam,gimbal,tracker,c=setup()
     cam.batch=batch(2,10.07,[obj(x)])
     tracker.select(cam.batch,0,2,10.07)
+    c._reset_pan_filter()
+    c._stable_pan_error((x-480)/480)
+    c._stable_pan_error((x-480)/480)
     c.step(10.08)
     return cam,gimbal,tracker,c
 
@@ -118,6 +121,9 @@ def test_pulse_not_extended_and_waits_for_post_stop_capture():
     assert gimbal.speed==[0,0]
     cam.batch=batch(5,deadline+.08)
     c.step(deadline+.11)
+    assert gimbal.speed==[0,0]
+    cam.batch=batch(6,deadline+.12)
+    c.step(deadline+.13)
     assert gimbal.speed[0]==-.4
 
 
@@ -266,3 +272,39 @@ def test_clockwise_duration_reduced_without_changing_anticlockwise(offset):
     assert cw_duration==pytest.approx(max(.020,.75*ccw_duration))
     scale=min(1,max(0,(offset/480-.06)/.60))
     assert ccw_duration==pytest.approx(.025+scale*(.060-.025))
+
+
+def test_alternating_center_noise_never_authorizes_pan():
+    cam,g,t,c=setup()
+    for i,x in enumerate([480,530,430,535,425,480,525,435]*3):
+        stamp=10.1+i*.1
+        cam.batch=batch(10+i,stamp,[obj(x)])
+        t.select(cam.batch,0,10+i,stamp)
+        c.step(stamp+.01)
+        assert g.speed==[0,0]
+
+
+def test_near_center_needs_three_new_consistent_batches():
+    cam,g,t,c=setup()
+    c._reset_pan_filter()
+    for i in range(3):
+        stamp=10.1+i*.1
+        cam.batch=batch(10+i,stamp,[obj(540)])
+        t.select(cam.batch,0,10+i,stamp)
+        c.step(stamp+.01)
+        if i<2:
+            assert g.speed==[0,0]
+            for repeat in range(5): c.step(stamp+.012+repeat*.001)
+            assert g.speed==[0,0]
+        else: assert g.speed[0]==-.4
+
+
+def test_center_measurement_clears_previous_motion_evidence():
+    _,_,_,c=setup()
+    c._reset_pan_filter()
+    c._stable_pan_error(.2);c._stable_pan_error(.2)
+    assert c._stable_pan_error(.01) is None
+    assert c._centered[0]
+    assert c._stable_pan_error(-.2) is None
+    assert c._stable_pan_error(-.2) is None
+    assert c._stable_pan_error(-.2)==-.2

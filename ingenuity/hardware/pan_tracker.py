@@ -3,6 +3,8 @@
 Only fresh observations authorize short movement pulses. All commands, including
 selection and STOP, are serialized with the control loop.
 """
+from collections import deque
+from statistics import median
 import logging
 import os
 import threading
@@ -44,6 +46,9 @@ class PanTracker:
         self._centered = [True, True]
         self._speed = [0.0, 0.0]
         self._error = None
+        self._pan_samples = deque(maxlen=3)
+        self._evidence_sign = 0
+        self._evidence_count = 0
         if autostart:
             self._thread = threading.Thread(target=self._loop, name='gimbal-tracking', daemon=True)
             self._thread.start()
@@ -76,6 +81,9 @@ class PanTracker:
             self._last_version = current['version']
             self._last_pan_sign = 0
             self._centered = [True, True]
+            self._reset_pan_filter()
+            width = current['size'][0]
+            self._stable_pan_error((state['target']['center'][0]-width/2)/(width/2))
             return self.snapshot()
 
     def stop_tracking(self):
@@ -83,8 +91,37 @@ class PanTracker:
             self.tracker.stop()
             self._pulse_until = 0.0
             self._pulse_active = False
+            self._reset_pan_filter()
             self._halt()
             return self.snapshot()
+
+    def _reset_pan_filter(self):
+        self._pan_samples.clear()
+        self._evidence_sign = 0
+        self._evidence_count = 0
+
+    def _stable_pan_error(self, raw):
+        """Called once per eligible detection batch, never per control tick."""
+        if abs(raw) <= self.ENTER_DEADBAND:
+            self._centered[0] = True
+            self._reset_pan_filter()
+            self._pan_samples.append(raw)
+            return None
+        self._pan_samples.append(raw)
+        filtered = median(self._pan_samples)
+        threshold = self.EXIT_DEADBAND if self._centered[0] else self.ENTER_DEADBAND
+        if abs(raw) <= threshold or abs(filtered) <= threshold or raw*filtered <= 0:
+            self._evidence_sign = 0
+            self._evidence_count = 0
+            return None
+        sign = 1 if raw > 0 else -1
+        if sign != self._evidence_sign:
+            self._evidence_sign, self._evidence_count = sign, 1
+        else:
+            self._evidence_count += 1
+        # Near the centre require three consistent observations; farther away two.
+        needed = 3 if abs(filtered) < 0.25 else 2
+        return filtered if self._evidence_count >= needed else None
 
     def _command(self, error, axis, dt):
         threshold = self.EXIT_DEADBAND if self._centered[axis] else self.ENTER_DEADBAND
@@ -120,6 +157,7 @@ class PanTracker:
                 if self._pulse_active:
                     self._observe_after = now + self.SETTLE_SECONDS
                 self._pulse_active = False
+                self._reset_pan_filter()
                 self._halt()
                 return
             x, y = state['target']['center']
@@ -131,13 +169,19 @@ class PanTracker:
                     self._halt()
                     self._pulse_active = False
                     self._observe_after = now + self.SETTLE_SECONDS
+                    self._reset_pan_filter()
+                    if abs(error) <= self.ENTER_DEADBAND or crossed:
+                        self._centered[0] = True
                 return
             if (batch['version'] == self._last_version or
                     batch['captured_at'] < self._observe_after):
                 self._halt()
                 return
             self._last_version = batch['version']
-            pan = self._command(error, 0, dt)
+            stable_error = self._stable_pan_error(error)
+            pan = 0.0 if stable_error is None else self._command(stable_error, 0, dt)
+            if stable_error is not None:
+                error = stable_error
             tilt = self._command((y-height/2)/(height/2), 1, dt) if self.tilt_enabled else 0.0
             if pan == 0 and tilt == 0:
                 self._halt()

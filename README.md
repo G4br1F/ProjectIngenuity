@@ -123,3 +123,13 @@ del riquadro precedente. Il filtro di rapporto delle aree resta 0,4–2,5.
 Se piu candidati sono plausibili e uno richiede il criterio esteso, l'associazione
 viene rifiutata. Sono euristiche geometriche, non identificazione della persona:
 incroci e occlusioni possono ancora richiedere una selezione manuale.
+
+
+### Stabilizzazione attorno al centro
+
+Il pan usa la mediana degli ultimi tre errori normalizzati ammissibili. Servono
+tre osservazioni coerenti sullo stesso lato vicino al centro (errore < 0,25),
+due piu lontano. La stessa versione non viene contata due volte. STOP, perdita
+e fine movimento azzerano le evidenze; un attraversamento del centro ripristina
+l'isteresi di uscita. La zona centrale non viene allargata. Il filtro aggiunge
+latenza dipendente dagli FPS di inferenza e deve essere verificato sul robot.
