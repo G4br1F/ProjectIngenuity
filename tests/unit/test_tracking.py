@@ -78,7 +78,7 @@ def test_lost_target_reacquired_only_within_grace():
     assert tracker.update(batch(2,10.1,[]),10.1)['mode']=='LOST'
     assert tracker.update(batch(3,10.2),10.2)['mode']=='TRACKING'
     tracker.update(batch(4,10.3,[]),10.3)
-    assert tracker.update(batch(5,12),12)['reason']=='reselect_required'
+    assert tracker.update(batch(5,14),14)['reason']=='reselect_required'
 
 
 def test_stale_observation_never_moved_even_when_published_now():
@@ -203,3 +203,54 @@ def test_reacquisition_grace_starts_when_target_is_lost():
     t.select(batch(1,9),0,1,9.1)
     assert t.update(batch(2,10.1,[]),10.2)['mode']=='LOST'
     assert t.update(batch(3,10.3),10.4)['mode']=='TRACKING'
+
+
+def detection(box, label='person'):
+    x1,y1,x2,y2=box
+    return {'class':label,'confidence':.8,'box':box,'center':[(x1+x2)//2,(y1+y2)//2]}
+
+
+@pytest.mark.parametrize('before,after',[
+    ([206,155,759,537],[410,145,957,534]),
+    ([438,143,958,536],[114,153,675,531]),
+])
+def test_user_large_overlapping_person_boxes_remain_associated(before,after):
+    t=TrackingManager()
+    t.select(batch(1,10,[detection(before)]),0,1,10)
+    state=t.update(batch(2,10.2,[detection(after)]),10.2)
+    assert state['mode']=='TRACKING'
+    assert state['target']['box']==after
+
+
+def test_overlap_does_not_select_distant_small_target_or_change_class():
+    for target in (obj(100),detection([760,200,900,400],'laptop')):
+        t=TrackingManager()
+        t.select(batch(),0,1,10)
+        assert t.update(batch(2,10.1,[target]),10.1)['mode']=='LOST'
+
+
+def test_extended_match_rejects_multiple_plausible_people():
+    t=TrackingManager()
+    t.select(batch(1,10,[detection([438,143,958,536])]),0,1,10)
+    state=t.update(batch(2,10.2,[detection([114,153,675,531]),
+                                detection([420,143,940,536])]),10.2)
+    assert state['reason']=='ambiguous_target'
+
+
+def test_dropout_reacquires_after_one_second_but_not_after_three():
+    t=TrackingManager()
+    t.select(batch(),0,1,10)
+    t.update(batch(2,10.1,[]),10.1)
+    assert t.update(batch(3,11.8),11.8)['mode']=='TRACKING'
+    t.update(batch(4,12,[]),12)
+    assert t.update(batch(5,15.2),15.2)['reason']=='reselect_required'
+
+
+def test_servo_stays_stopped_through_detection_dropout():
+    cam,g,t,c=start_pulse()
+    cam.batch=batch(3,10.10,[])
+    c.step(10.11)
+    assert g.speed==[0,0]
+    cam.batch=batch(4,11.0,[])
+    c.step(11.01)
+    assert g.speed==[0,0] and t.snapshot()['mode']=='LOST'

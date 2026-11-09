@@ -111,3 +111,15 @@ perdita del bersaglio, non dall'acquisizione dell'ultima immagine valida.
 
 Validazione software: test con clock, camera e servo simulati. Il controllo a
 impulsi brevi richiede ancora verifica fisica di verso, overshoot e STOP sul robot.
+
+
+### Riaggancio dopo detection intermittenti
+
+La finestra di riaggancio e 3 secondi dalla prima perdita. Durante LOST i motori
+restano fermi; non si allunga la validita delle immagini (sempre 1,5 secondi).
+Oltre al limite di centro di 180 pixel, una detection della stessa classe puo
+corrispondere se IoU >= 0,25 e lo spostamento non supera il 60% della diagonale
+del riquadro precedente. Il filtro di rapporto delle aree resta 0,4–2,5.
+Se piu candidati sono plausibili e uno richiede il criterio esteso, l'associazione
+viene rifiutata. Sono euristiche geometriche, non identificazione della persona:
+incroci e occlusioni possono ancora richiedere una selezione manuale.

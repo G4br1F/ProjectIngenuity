@@ -6,7 +6,7 @@ import time
 
 
 class TrackingManager:
-    def __init__(self, max_match_distance=180, stale_after=1.5, reacquire_for=1.0):
+    def __init__(self, max_match_distance=180, stale_after=1.5, reacquire_for=3.0):
         self._lock = threading.RLock()
         self.max_distance = max_match_distance
         self.stale_after = stale_after
@@ -74,16 +74,26 @@ class TrackingManager:
                 distance = math.hypot(cx - x, cy - y)
                 # Gate large changes in size as well as position.
                 old_box, box = self._target.get('box'), item.get('box')
+                overlap_match = False
                 if old_box and box:
                     old_area = max(1, (old_box[2]-old_box[0]) * (old_box[3]-old_box[1]))
                     area = max(1, (box[2]-box[0]) * (box[3]-box[1]))
                     if not 0.4 <= area / old_area <= 2.5:
                         continue
-                if distance <= self.max_distance:
+                    intersection = (max(0, min(old_box[2], box[2])-max(old_box[0], box[0])) *
+                                    max(0, min(old_box[3], box[3])-max(old_box[1], box[1])))
+                    iou = intersection / max(1, old_area + area - intersection)
+                    # Large visible targets can shift their box centre by more
+                    # than 180 px while still substantially overlapping.
+                    diagonal = math.hypot(old_box[2]-old_box[0], old_box[3]-old_box[1])
+                    overlap_match = iou >= 0.25 and distance <= 0.60 * diagonal
+                if distance <= self.max_distance or overlap_match:
                     candidates.append((distance, item))
             candidates.sort(key=lambda pair: pair[0])
             # Do not guess between two similarly plausible objects of the same class.
-            ambiguous = len(candidates) > 1 and candidates[1][0] - candidates[0][0] < 25
+            ambiguous = len(candidates) > 1 and (
+                candidates[1][0] - candidates[0][0] < 25 or
+                any(distance > self.max_distance for distance, _ in candidates))
             if not candidates or ambiguous:
                 if self._lost_at is None:
                     self._lost_at = now
