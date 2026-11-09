@@ -254,3 +254,15 @@ def test_servo_stays_stopped_through_detection_dropout():
     cam.batch=batch(4,11.0,[])
     c.step(11.01)
     assert g.speed==[0,0] and t.snapshot()['mode']=='LOST'
+
+
+@pytest.mark.parametrize('offset',[60,180,420])
+def test_clockwise_duration_reduced_without_changing_anticlockwise(offset):
+    _,g_cw,_,cw=start_pulse(480-offset)
+    _,g_ccw,_,ccw=start_pulse(480+offset)
+    assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.4
+    ccw_duration=ccw._pulse_until-10.08
+    cw_duration=cw._pulse_until-10.08
+    assert cw_duration==pytest.approx(max(.020,.75*ccw_duration))
+    scale=min(1,max(0,(offset/480-.06)/.60))
+    assert ccw_duration==pytest.approx(.025+scale*(.060-.025))

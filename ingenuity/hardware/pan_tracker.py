@@ -149,6 +149,10 @@ class PanTracker:
             sign = 1 if pan > 0 else -1 if pan < 0 else 0
             if sign and self._last_pan_sign and sign != self._last_pan_sign:
                 duration = self.MIN_PULSE_SECONDS
+            # Clockwise (1550 us) produces more travel on this gimbal.
+            # Keep at least one nominal 50 Hz PWM period.
+            if pan > 0:
+                duration = max(0.020, duration * 0.75)
             if sign:
                 self._last_pan_sign = sign
             deadline = batch['captured_at'] + self.tracker.stale_after
