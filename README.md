@@ -94,8 +94,8 @@ sono fermi a 1500 us. STOP disabilita il PWM, comportamento verificato sui servo
 installati; non garantisce coppia di mantenimento o arresto in caso di bus guasto.
 Questa calibrazione e specifica dell'hardware, non universale.
 
-Il pan usa attualmente 1550 us nel verso positivo e 1415 us nel negativo. La durata
-e proporzionale all'errore (vedi taratura sotto) e torna al minimo dopo un'inversione.
+Il pan usa 1550 us nel verso positivo e 1400 us nel negativo. La durata e
+proporzionale all'errore, da 25 a 60 ms, e torna al minimo dopo un'inversione.
 Ogni movimento termina senza estensioni dovute a nuove detection. Prima di un
 altro movimento serve un'immagine acquisita almeno 60 ms dopo l'arresto.
 La zona centrale e l'isteresi restano attive. Le temporizzazioni dipendono dallo
@@ -131,36 +131,15 @@ Il pan usa la mediana degli ultimi tre errori normalizzati ammissibili. Servono
 tre osservazioni coerenti sullo stesso lato vicino al centro (errore < 0,25),
 due piu lontano. La stessa versione non viene contata due volte. STOP, perdita
 e fine movimento azzerano le evidenze; un attraversamento del centro ripristina
-l'isteresi di uscita. Per le persone grandi la zona centrale viene adattata come descritto sotto. Il filtro aggiunge
+l'isteresi di uscita. La zona centrale non viene allargata. Il filtro aggiunge
 latenza dipendente dagli FPS di inferenza e deve essere verificato sul robot.
 
 
 ### Taratura a passi piu piccoli
 
-Durata aggiornata: 20–35 ms in senso antiorario (1415 us) e 20–26,25 ms
+Durata aggiornata: 20–35 ms in senso antiorario (1400 us) e 20–26,25 ms
 in senso orario (1550 us). Restano la conferma temporale delle detection,
 l'attesa di 60 ms dopo l'arresto e la richiesta di una nuova immagine successiva
 all'attesa. Nessun movimento viene prolungato dall'arrivo di altre detection.
 Questi sono tempi richiesti al software, non misure dello spostamento angolare:
 la risposta meccanica e i ritardi dello scheduling vanno verificati sul robot.
-
-### Persone vicine e riquadri tagliati (10 novembre 2026)
-
-Per la classe person, la tolleranza del pan cresce gradualmente quando la larghezza
-del riquadro passa dal 35% al 75% dell'immagine. Le soglie di ingresso/uscita
-passano da 0,06/0,09 a 0,12/0,15, normalizzate rispetto alla meta della larghezza:
-a 960 px sono rispettivamente circa 29/43 px e 58/72 px. La dimensione del riquadro
-e solo un indicatore euristico, non una misura della distanza.
-
-Se il riquadro arriva entro il 2% di un bordo laterale, il movimento viene sospeso,
-anche durante un impulso. Il bersaglio resta selezionato finche il tracker lo
-riconosce; la dashboard segnala la pausa. Il filtro viene azzerato e la ripresa
-richiede nuove osservazioni coerenti con il riquadro di nuovo interno ai bordi.
-Non si tenta di recuperare automaticamente una persona parzialmente fuori campo:
-puo essere necessario che rientri o si allontani dalla camera. Il centro usato
-resta quello del riquadro, non quello anatomico del corpo.
-
-Restano invariati STOP, freschezza dei dati, velocita calibrate (1415/1550 us),
-durate massime e pausa dopo ogni movimento. Test software con camera e servo
-simulati verificano oscillazioni dei riquadri grandi, bordi, arresto durante un
-impulso, ripresa e altre classi. La resa fisica richiede una prova sul robot.

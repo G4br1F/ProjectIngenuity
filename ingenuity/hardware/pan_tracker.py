@@ -46,9 +46,6 @@ class PanTracker:
         self._centered = [True, True]
         self._speed = [0.0, 0.0]
         self._error = None
-        self._pan_enter = self.ENTER_DEADBAND
-        self._pan_exit = self.EXIT_DEADBAND
-        self._control_reason = None
         self._pan_samples = deque(maxlen=3)
         self._evidence_sign = 0
         self._evidence_count = 0
@@ -86,36 +83,17 @@ class PanTracker:
             self._centered = [True, True]
             self._reset_pan_filter()
             width = current['size'][0]
-            if not self._configure_pan_target(state['target'], width):
-                self._stable_pan_error((state['target']['center'][0]-width/2)/(width/2))
+            self._stable_pan_error((state['target']['center'][0]-width/2)/(width/2))
             return self.snapshot()
 
     def stop_tracking(self):
         with self._lock:
             self.tracker.stop()
-            self._control_reason = None
             self._pulse_until = 0.0
             self._pulse_active = False
             self._reset_pan_filter()
             self._halt()
             return self.snapshot()
-
-    def _configure_pan_target(self, target, width):
-        """Bounding-box size is a heuristic, not a distance measurement."""
-        self._pan_enter = self.ENTER_DEADBAND
-        self._pan_exit = self.EXIT_DEADBAND
-        self._control_reason = None
-        if target.get('class') != 'person':
-            return False
-        left, _, right, _ = target['box']
-        fraction = max(0.0, (right-left)/width)
-        scale = min(1.0, max(0.0, (fraction-0.35)/0.40))
-        self._pan_enter += 0.06 * scale
-        self._pan_exit += 0.06 * scale
-        clipped = left <= width*0.02 or right >= width*0.98
-        if clipped:
-            self._control_reason = 'person_at_horizontal_edge'
-        return clipped
 
     def _reset_pan_filter(self):
         self._pan_samples.clear()
@@ -124,14 +102,14 @@ class PanTracker:
 
     def _stable_pan_error(self, raw):
         """Called once per eligible detection batch, never per control tick."""
-        if abs(raw) <= self._pan_enter:
+        if abs(raw) <= self.ENTER_DEADBAND:
             self._centered[0] = True
             self._reset_pan_filter()
             self._pan_samples.append(raw)
             return None
         self._pan_samples.append(raw)
         filtered = median(self._pan_samples)
-        threshold = self._pan_exit if self._centered[0] else self._pan_enter
+        threshold = self.EXIT_DEADBAND if self._centered[0] else self.ENTER_DEADBAND
         if abs(raw) <= threshold or abs(filtered) <= threshold or raw*filtered <= 0:
             self._evidence_sign = 0
             self._evidence_count = 0
@@ -146,9 +124,7 @@ class PanTracker:
         return filtered if self._evidence_count >= needed else None
 
     def _command(self, error, axis, dt):
-        enter = self._pan_enter if axis == 0 else self.ENTER_DEADBAND
-        leave = self._pan_exit if axis == 0 else self.EXIT_DEADBAND
-        threshold = leave if self._centered[axis] else enter
+        threshold = self.EXIT_DEADBAND if self._centered[axis] else self.ENTER_DEADBAND
         if abs(error) <= threshold:
             self._centered[axis] = True
             return 0.0
@@ -178,21 +154,9 @@ class PanTracker:
             state = self.tracker.update(batch, now)
             width, height = batch['size']
             if state['mode'] != 'TRACKING':
-                self._control_reason = None
                 if self._pulse_active:
                     self._observe_after = now + self.SETTLE_SECONDS
                 self._pulse_active = False
-                self._reset_pan_filter()
-                self._halt()
-                return
-            if self._configure_pan_target(state['target'], width):
-                # Stop even an active pulse; never steer on a truncated person.
-                if self._pulse_active:
-                    self._observe_after = now + self.SETTLE_SECONDS
-                self._pulse_active = False
-                self._pulse_until = 0.0
-                self._last_version = batch['version']
-                self._centered[0] = True
                 self._reset_pan_filter()
                 self._halt()
                 return
@@ -201,12 +165,12 @@ class PanTracker:
             if self._pulse_active:
                 # Never extend a movement because another inference finished.
                 crossed = error * self._pulse_error < 0
-                if now >= self._pulse_until or abs(error) <= self._pan_enter or crossed:
+                if now >= self._pulse_until or abs(error) <= self.ENTER_DEADBAND or crossed:
                     self._halt()
                     self._pulse_active = False
                     self._observe_after = now + self.SETTLE_SECONDS
                     self._reset_pan_filter()
-                    if abs(error) <= self._pan_enter or crossed:
+                    if abs(error) <= self.ENTER_DEADBAND or crossed:
                         self._centered[0] = True
                 return
             if (batch['version'] == self._last_version or
@@ -224,7 +188,7 @@ class PanTracker:
                 return
             # Effective servo commands with proportional duration instead of a
             # ramp trapped inside the servo's dead zone.
-            scale = min(1.0, max(0.0, (abs(error)-self._pan_enter)/0.60))
+            scale = min(1.0, max(0.0, (abs(error)-self.ENTER_DEADBAND)/0.60))
             duration = self.MIN_PULSE_SECONDS + scale*(self.MAX_PULSE_SECONDS-self.MIN_PULSE_SECONDS)
             sign = 1 if pan > 0 else -1 if pan < 0 else 0
             if sign and self._last_pan_sign and sign != self._last_pan_sign:
@@ -272,9 +236,7 @@ class PanTracker:
         with self._lock:
             return {**self.tracker.snapshot(), 'actuation': 'enabled',
                     'pan_speed': self._speed[0], 'tilt_speed': self._speed[1],
-                    'tilt_enabled': self.tilt_enabled, 'error': self._error,
-                    'control_reason': self._control_reason,
-                    'pan_deadband': [self._pan_enter, self._pan_exit]}
+                    'tilt_enabled': self.tilt_enabled, 'error': self._error}
 
     def stop(self):
         self._stop_event.set()

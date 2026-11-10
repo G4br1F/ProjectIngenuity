@@ -92,9 +92,7 @@ function updateDashboard(data) {
     setText('ai-inference-fps', `${Number(camera.inference_fps ?? 0).toFixed(1)} FPS`);
     setText('tracking-status', tracking.mode ?? 'IDLE');
     if (tracking.mode === 'TRACKING' && !tracking.reason && !tracking.error && !camera.ai_error && !camera.camera_error) {
-        message(tracking.control_reason === 'person_at_horizontal_edge'
-            ? 'Persona al bordo: movimento sospeso finche rientra nell’inquadratura'
-            : 'Inseguimento attivo');
+        message('Inseguimento attivo');
     }
     if (tracking.reason || tracking.error || camera.ai_error || camera.camera_error) {
         message(tracking.reason || tracking.error || camera.ai_error || camera.camera_error);

@@ -109,7 +109,7 @@ def start_pulse(x=800):
 
 def test_pulse_not_extended_and_waits_for_post_stop_capture():
     cam,gimbal,tracker,c=start_pulse()
-    assert gimbal.speed[0]==-.34
+    assert gimbal.speed[0]==-.4
     deadline=c._pulse_until
     cam.batch=batch(3,10.09)
     c.step(10.10)
@@ -124,12 +124,12 @@ def test_pulse_not_extended_and_waits_for_post_stop_capture():
     assert gimbal.speed==[0,0]
     cam.batch=batch(6,deadline+.12)
     c.step(deadline+.13)
-    assert gimbal.speed[0]==-.34
+    assert gimbal.speed[0]==-.4
 
 
 def test_shorter_correction_near_center_and_after_crossing():
     _,g,_,near=start_pulse(540)
-    assert g.speed[0]==-.34
+    assert g.speed[0]==-.4
     _,_,_,far=start_pulse(900)
     assert near._pulse_until < far._pulse_until
     assert near._pulse_until-10.08 >= near.MIN_PULSE_SECONDS-1e-9
@@ -139,7 +139,7 @@ def test_shorter_correction_near_center_and_after_crossing():
 def test_effective_commands_center_and_inversion():
     _,_,_,c=setup()
     assert c._command(0,0,.005)==0
-    assert c._command(.5,0,.005)==-.34
+    assert c._command(.5,0,.005)==-.4
     assert c._command(-.5,0,.005)==.2
     c._speed[0]=.2
     assert c._command(.5,0,.005)==0
@@ -161,7 +161,7 @@ def test_rejected_selection_preserves_active_target():
     before=t.snapshot()
     with pytest.raises(ValueError): c.select(0,999)
     assert t.snapshot()==before
-    assert g.speed[0]==-.34
+    assert g.speed[0]==-.4
 
 
 def test_old_displayed_batch_resolves_reordered_target():
@@ -266,7 +266,7 @@ def test_servo_stays_stopped_through_detection_dropout():
 def test_directional_duration_limits(offset):
     _,g_cw,_,cw=start_pulse(480-offset)
     _,g_ccw,_,ccw=start_pulse(480+offset)
-    assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.34
+    assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.4
     ccw_duration=ccw._pulse_until-10.08
     cw_duration=cw._pulse_until-10.08
     assert cw_duration==pytest.approx(max(.020,.75*ccw_duration))
@@ -296,7 +296,7 @@ def test_near_center_needs_three_new_consistent_batches():
             assert g.speed==[0,0]
             for repeat in range(5): c.step(stamp+.012+repeat*.001)
             assert g.speed==[0,0]
-        else: assert g.speed[0]==-.34
+        else: assert g.speed[0]==-.4
 
 
 def test_center_measurement_clears_previous_motion_evidence():
@@ -321,84 +321,3 @@ def test_small_corrections_stop_without_replaying_same_detection(x):
     for now in [10.2,10.3,10.4]:
         c.step(now)
         assert g.speed==[0,0]
-
-
-def person_box(left, right):
-    return {'class': 'person', 'confidence': .9,
-            'center': [(left+right)/2, 270], 'box': [left, 20, right, 520]}
-
-
-def target_controller(target):
-    cam, gimbal, tracker, c = setup()
-    cam.batch = batch(2, 10, [target])
-    c.select(0, 2)
-    return cam, gimbal, tracker, c
-
-
-def test_large_person_box_jitter_does_not_move_pan():
-    cam, g, tracker, c = target_controller(person_box(180, 900))
-    # Centre alternates by +/-60 px: outside the old band, inside the new one.
-    for version in range(3, 13):
-        target = person_box(180, 900) if version % 2 else person_box(60, 780)
-        stamp = 10 + version*.1
-        cam.batch = batch(version, stamp, [target])
-        c.step(stamp+.01)
-        assert tracker.snapshot()['mode'] == 'TRACKING'
-        assert g.speed == [0, 0]
-
-
-@pytest.mark.parametrize('left,right', [(0, 700), (260, 959), (0, 959)])
-def test_clipped_person_holds_without_losing_target(left, right):
-    target = person_box(left, right)
-    cam, g, tracker, c = target_controller(target)
-    for version in range(3, 7):
-        stamp = 10 + version*.1
-        cam.batch = batch(version, stamp, [target])
-        c.step(stamp+.01)
-        assert g.speed == [0, 0]
-        assert tracker.snapshot()['mode'] == 'TRACKING'
-        assert c.snapshot()['control_reason'] == 'person_at_horizontal_edge'
-    c.stop_tracking()
-    assert c.snapshot()['control_reason'] is None
-
-
-def test_clipped_person_interrupts_active_pulse_and_recovers_on_new_evidence():
-    cam, g, tracker, c = target_controller(person_box(320, 940))
-    for version in (4,):
-        stamp = 10 + version*.1
-        cam.batch = batch(version, stamp, [person_box(320, 940)])
-        c.step(stamp+.01)
-    assert c._pulse_active
-    cam.batch = batch(5, 10.415, [person_box(340, 959)])
-    c.step(10.42)
-    assert g.speed == [0, 0]
-    assert not c._pulse_active
-    assert tracker.snapshot()['mode'] == 'TRACKING'
-    # Returning once is insufficient: old evidence must have been discarded.
-    cam.batch = batch(6, 10.50, [person_box(320, 940)])
-    c.step(10.51)
-    assert g.speed == [0, 0]
-    cam.batch = batch(7, 10.60, [person_box(320, 940)])
-    c.step(10.61)
-    assert g.speed[0] == -.34
-    assert c.snapshot()['control_reason'] is None
-
-
-def test_large_person_still_corrects_persistent_error_outside_wider_band():
-    cam, g, tracker, c = target_controller(person_box(320, 940))
-    cam.batch = batch(3, 10.1, [person_box(320, 940)])
-    c.step(10.11)
-    assert g.speed[0] == -.34
-    c.stop_tracking()
-    assert g.speed == [0, 0]
-
-
-def test_person_size_policy_does_not_apply_to_other_classes():
-    target = person_box(260, 959)
-    target['class'] = 'tv'
-    cam, g, tracker, c = target_controller(target)
-    cam.batch = batch(3, 10.1, [target])
-    c.step(10.11)
-    assert g.speed[0] == -.34
-    assert c.snapshot()['pan_deadband'] == [.06, .09]
-    assert c.snapshot()['control_reason'] is None
