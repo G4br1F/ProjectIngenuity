@@ -138,7 +138,7 @@ class PanTracker:
         if desired * previous < 0:
             return 0.0
         if axis == 0:
-            return 0.20 if desired > 0 else -0.40
+            return 0.20 if desired > 0 else -0.34
         step = self.ACCELERATION * dt
         return max(previous-step, min(previous+step, desired))
 
