@@ -20,6 +20,8 @@ class Camera:
     def __init__(self, *, picam_factory=None, model_factory=None):
         import cv2
         self.cv2 = cv2
+        from ingenuity.vision.faces import FaceLocator
+        self.faces = FaceLocator(cv2)
         self._condition = threading.Condition()
         self._selection_history = deque(maxlen=32)
         self._stop_event = threading.Event()
@@ -120,6 +122,10 @@ class Camera:
                     for detection in batch['objects']:
                         x1, y1, x2, y2 = detection['box']
                         self.cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
+                        if 'face_box' in detection:
+                            fx1, fy1, fx2, fy2 = detection['face_box']
+                            self.cv2.rectangle(frame, (fx1,fy1), (fx2,fy2), (255,255,0), 2)
+                            self.cv2.drawMarker(frame, tuple(detection['aim_center']), (255,255,0))
                         self.cv2.putText(frame, detection['class'], (x1,max(20,y1-8)),
                                          self.cv2.FONT_HERSHEY_SIMPLEX, .5, (0,255,0), 1)
                 self.cv2.drawMarker(frame, (frame.shape[1]//2,frame.shape[0]//2), (0,255,255))
@@ -164,6 +170,7 @@ class Camera:
                         detections.append({'class': result.names[int(box.cls[0])],
                                            'confidence': round(float(box.conf[0]),3),
                                            'box': [x1,y1,x2,y2], 'center': [(x1+x2)//2,(y1+y2)//2]})
+                self.faces.enrich(frame, detections)
                 now = time.monotonic()
                 if now-stamp > self.STALE_AFTER:
                     self._invalidate(ai_error='Inferenza troppo lenta: risultato scaduto')
@@ -218,7 +225,8 @@ class Camera:
             return {'online': camera_ok, 'ai_online': ai_ok,
                     'fps': round(self.camera_fps,1) if camera_ok else 0.0,
                     'inference_fps': round(self.inference_fps,1) if ai_ok else 0.0,
-                    'camera_error': self._camera_error, 'ai_error': self._ai_error}
+                    'camera_error': self._camera_error, 'ai_error': self._ai_error,
+                    'face_enabled': self.faces.enabled, 'face_error': self.faces.error}
 
     def get_camera_fps(self):
         return self.get_status()['fps']

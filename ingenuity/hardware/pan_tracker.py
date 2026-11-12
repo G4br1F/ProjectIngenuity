@@ -48,6 +48,8 @@ class PanTracker:
         self._centered = [True, True]
         self._speed = [0.0, 0.0]
         self._error = None
+        self._aim_kind = None
+        self._control_reason = None
         self._tilt_samples = deque(maxlen=3)
         self._tilt_evidence_sign = 0
         self._tilt_evidence_count = 0
@@ -76,6 +78,7 @@ class PanTracker:
             candidate.select(selected, index, version, now)
             state = candidate.update(current, now)
             if state['mode'] != 'TRACKING':
+                self._control_reason = None
                 raise ValueError('Bersaglio assente, ambiguo o scaduto: seleziona di nuovo')
             index_now = next(i for i, item in enumerate(current['objects'])
                              if item == state['target'])
@@ -90,21 +93,36 @@ class PanTracker:
             self._reset_pan_filter()
             self._reset_tilt_filter()
             width = current['size'][0]
-            self._stable_pan_error((state['target']['center'][0]-width/2)/(width/2))
+            target = state['target']
+            self._aim_kind = target.get('aim_kind', 'box')
+            self._control_reason = None
+            point = self._aim_point(target)
+            if point is None:
+                self._control_reason = self._aim_kind
+                return self.snapshot()
+            self._stable_pan_error((point[0]-width/2)/(width/2))
             if self.tilt_enabled:
                 height = current['size'][1]
-                self._stable_tilt_error((state['target']['center'][1]-height/2)/(height/2))
+                self._stable_tilt_error((point[1]-height/2)/(height/2))
             return self.snapshot()
 
     def stop_tracking(self):
         with self._lock:
             self.tracker.stop()
+            self._control_reason = None
+            self._aim_kind = None
             self._pulse_until = 0.0
             self._pulse_active = False
             self._reset_pan_filter()
             self._reset_tilt_filter()
             self._halt()
             return self.snapshot()
+
+    @staticmethod
+    def _aim_point(target):
+        if target.get('class') == 'person' and 'aim_kind' in target:
+            return target.get('aim_center') if target['aim_kind'] == 'face' else None
+        return target['center']
 
     def _reset_pan_filter(self):
         self._pan_samples.clear()
@@ -200,7 +218,23 @@ class PanTracker:
                 self._reset_tilt_filter()
                 self._halt()
                 return
-            x, y = state['target']['center']
+            target = state['target']
+            kind = target.get('aim_kind', 'box')
+            point = self._aim_point(target)
+            if point is None or kind != self._aim_kind:
+                if self._pulse_active:
+                    self._observe_after = now + self.SETTLE_SECONDS
+                self._halt()
+                self._reset_pan_filter()
+                self._reset_tilt_filter()
+                self._centered = [True, True]
+                self._aim_kind = kind
+                self._control_reason = kind if point is None else None
+                if point is None:
+                    self._last_version = batch['version']
+                return
+            self._control_reason = None
+            x, y = point
             error = (x-width/2)/(width/2)
             tilt_error = (y-height/2)/(height/2)
             if self._pulse_active:
@@ -295,7 +329,8 @@ class PanTracker:
         with self._lock:
             return {**self.tracker.snapshot(), 'actuation': 'enabled',
                     'pan_speed': self._speed[0], 'tilt_speed': self._speed[1],
-                    'tilt_enabled': self.tilt_enabled, 'error': self._error}
+                    'tilt_enabled': self.tilt_enabled, 'error': self._error,
+                    'aim_kind': self._aim_kind, 'control_reason': self._control_reason}
 
     def stop(self):
         self._stop_event.set()

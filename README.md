@@ -173,3 +173,32 @@ Nessun blocco ai bordi laterali e stato reintrodotto. I test software simulano
 gli assi; la prima prova integrata sul robot va fatta con corsa libera,
 cavo non in tensione e STOP accessibile. Non ci sono encoder o finecorsa:
 il software non conosce l'inclinazione assoluta e i tempi dipendono da Linux.
+
+### Primo riferimento al volto (sperimentale)
+
+TRACK_FACE_ENABLED=1 abilita il rilevatore frontale Haar di OpenCV, senza cambiare
+il modello YOLO NCNN. Il default e 0. FACE_CASCADE_PATH permette di indicare
+haarcascade_frontalface_default.xml; in assenza di override si cerca nei dati
+di cv2 e in /usr/share/opencv4/haarcascades. Un file mancante o non valido appare
+in camera_data.face_error: non installare un secondo OpenCV alla cieca.
+
+Il rilevatore lavora una volta per inferenza YOLO, solo quando sono presenti
+persone, su immagine ridotta a lato massimo 640. Non e riconoscimento di identita.
+Ciascun volto deve ricadere in un solo riquadro persona e quella persona deve
+avere un solo volto candidato. Ambiguita e assenza del volto sospendono entrambi
+gli assi per la persona selezionata, senza rimuovere la selezione del corpo.
+Al ritorno del volto servono nuove osservazioni coerenti. STOP resta immediato
+rispetto al ciclo software, con i limiti I2C/Linux gia descritti.
+
+Il riquadro e il centro del corpo restano usati dall'associazione del tracker.
+Solo il controllo gimbal usa aim_center del volto; il video mostra il riquadro
+volto e il punto di mira in ciano. Oggetti diversi dalle persone conservano
+il centro originale. La dashboard distingue volto attivo, assente e ambiguo.
+
+Questa prima fase NON cerca automaticamente verso l'alto quando sono visibili
+solo le gambe e NON stima le spalle. Nessun volto non significa necessariamente
+gambe visibili: puo essere profilo, occlusione o mancata detection. Il rilevatore
+frontale puo perdere volti ruotati, piccoli o poco illuminati. Verificare precisione,
+FPS di inferenza e temperatura sul Raspberry prima di introdurre una ricerca
+verticale limitata. Per tornare al tracking del corpo impostare TRACK_FACE_ENABLED=0
+e riavviare il servizio.

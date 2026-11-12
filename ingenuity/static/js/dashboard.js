@@ -92,7 +92,11 @@ function updateDashboard(data) {
     setText('ai-inference-fps', `${Number(camera.inference_fps ?? 0).toFixed(1)} FPS`);
     setText('tracking-status', tracking.mode ?? 'IDLE');
     if (tracking.mode === 'TRACKING' && !tracking.reason && !tracking.error && !camera.ai_error && !camera.camera_error) {
-        message('Inseguimento attivo');
+        message(camera.face_error ? 'Rilevamento volto non disponibile: ' + camera.face_error
+            : tracking.control_reason === 'face_missing' ? 'Volto non visibile: movimento sospeso'
+            : tracking.control_reason === 'face_ambiguous' ? 'Volto ambiguo: movimento sospeso'
+            : tracking.aim_kind === 'face' ? 'Inseguimento volto attivo'
+            : 'Inseguimento attivo');
     }
     if (tracking.reason || tracking.error || camera.ai_error || camera.camera_error) {
         message(tracking.reason || tracking.error || camera.ai_error || camera.camera_error);
