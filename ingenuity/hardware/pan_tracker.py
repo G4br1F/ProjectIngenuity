@@ -1,121 +1,343 @@
+"""Bounded, proportional control for continuous-rotation servos.
+
+Only fresh observations authorize short movement pulses. All commands, including
+selection and STOP, are serialized with the control loop.
+"""
+from collections import deque
+from statistics import median
+import logging
+import os
 import threading
 import time
+from ingenuity.vision.tracking import TrackingManager
+
+log = logging.getLogger(__name__)
 
 
 class PanTracker:
-    IMAGE_WIDTH = 960
-
-    # Zona centrale in cui il PAN resta fermo.
-    DEADBAND = 40
-
-    # Velocità massima iniziale, da calibrare.
+    PERIOD = 0.005
     MAX_SPEED = 0.10
+    MIN_SPEED = 0.025
+    ACCELERATION = 0.5
+    ENTER_DEADBAND = 0.06
+    EXIT_DEADBAND = 0.09
+    MAX_PULSE_SECONDS = 0.035
+    MIN_PULSE_SECONDS = 0.020
+    SETTLE_SECONDS = 0.060
+    TILT_PULSE_SECONDS = 0.100
 
-    # Velocità minima richiesta quando fuori dalla deadband.
-    MIN_SPEED = 0.02
+    def __init__(self, camera, gimbal, tracker, *, autostart=True, clock=time.monotonic,
+                 pan_direction=None, tilt_direction=None, tilt_enabled=None):
+        self.camera, self.gimbal, self.tracker = camera, gimbal, tracker
+        self.clock = clock
+        self.pan_direction = int(os.getenv('PAN_DIRECTION', '-1')) if pan_direction is None else pan_direction
+        self.tilt_direction = int(os.getenv('TILT_DIRECTION', '-1')) if tilt_direction is None else tilt_direction
+        self.tilt_enabled = os.getenv('TRACK_TILT_ENABLED', '0') == '1' if tilt_enabled is None else tilt_enabled
+        if self.pan_direction not in (-1, 1) or self.tilt_direction not in (-1, 1):
+            raise ValueError('PAN_DIRECTION e TILT_DIRECTION devono essere -1 o 1')
+        self._lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._last_version = -1
+        self._tilt_until = 0.0
+        self._pulse_until = 0.0
+        self._observe_after = float("-inf")
+        self._pulse_active = False
+        self._last_pan_sign = 0
+        self._last_step = self.clock()
+        self._centered = [True, True]
+        self._speed = [0.0, 0.0]
+        self._error = None
+        self._aim_kind = None
+        self._control_reason = None
+        self._tilt_samples = deque(maxlen=3)
+        self._tilt_evidence_sign = 0
+        self._tilt_evidence_count = 0
+        self._pan_samples = deque(maxlen=3)
+        self._evidence_sign = 0
+        self._evidence_count = 0
+        if autostart:
+            self._thread = threading.Thread(target=self._loop, name='gimbal-tracking', daemon=True)
+            self._thread.start()
 
-    # Errore in pixel necessario per raggiungere MAX_SPEED.
-    MAX_ERROR = 300
+    def _halt(self):
+        self._speed = [0.0, 0.0]
+        self._pulse_active = False
+        self.gimbal.stop()
 
-    # Invertire a -1 se il PAN corregge nella direzione sbagliata.
-    PAN_DIRECTION = 1
+    def select(self, index, version):
+        with self._lock:
+            now = self.clock()
+            current = self.camera.get_detection_snapshot()
+            resolver = getattr(self.camera, 'get_selection_snapshot', None)
+            selected = resolver(version) if resolver else current
+            # Validate and associate on a temporary tracker; rejected clicks leave
+            # the existing target and pulse untouched.
+            candidate = TrackingManager(self.tracker.max_distance,
+                                        self.tracker.stale_after, self.tracker.reacquire_for)
+            candidate.select(selected, index, version, now)
+            state = candidate.update(current, now)
+            if state['mode'] != 'TRACKING':
+                self._control_reason = None
+                raise ValueError('Bersaglio assente, ambiguo o scaduto: seleziona di nuovo')
+            index_now = next(i for i, item in enumerate(current['objects'])
+                             if item == state['target'])
+            self._halt()
+            self.tracker.select(current, index_now, current['version'], now)
+            self._pulse_active = False
+            self._pulse_until = 0.0
+            self._observe_after = now + self.SETTLE_SECONDS
+            self._last_version = current['version']
+            self._last_pan_sign = 0
+            self._centered = [True, True]
+            self._reset_pan_filter()
+            self._reset_tilt_filter()
+            width = current['size'][0]
+            target = state['target']
+            self._aim_kind = target.get('aim_kind', 'box')
+            self._control_reason = None
+            point = self._aim_point(target)
+            if point is None:
+                self._control_reason = self._aim_kind
+                return self.snapshot()
+            self._stable_pan_error((point[0]-width/2)/(width/2))
+            if self.tilt_enabled:
+                height = current['size'][1]
+                self._stable_tilt_error((point[1]-height/2)/(height/2))
+            return self.snapshot()
 
-    def __init__(self, camera, gimbal, tracker):
-        self.camera = camera
-        self.gimbal = gimbal
-        self.tracker = tracker
+    def stop_tracking(self):
+        with self._lock:
+            self.tracker.stop()
+            self._control_reason = None
+            self._aim_kind = None
+            self._pulse_until = 0.0
+            self._pulse_active = False
+            self._reset_pan_filter()
+            self._reset_tilt_filter()
+            self._halt()
+            return self.snapshot()
 
-        self._running = True
-        self._last_detection_version = -1
+    @staticmethod
+    def _aim_point(target):
+        if target.get('class') == 'person' and 'aim_kind' in target:
+            return target.get('aim_center') if target['aim_kind'] == 'face' else None
+        return target['center']
 
-        self._thread = threading.Thread(
-            target=self._loop,
-            daemon=True,
-        )
-        self._thread.start()
+    def _reset_pan_filter(self):
+        self._pan_samples.clear()
+        self._evidence_sign = 0
+        self._evidence_count = 0
 
-    def _stop_pan(self):
-        self.gimbal.stop_pan()
+    def _stable_pan_error(self, raw):
+        """Called once per eligible detection batch, never per control tick."""
+        if abs(raw) <= self.ENTER_DEADBAND:
+            self._centered[0] = True
+            self._reset_pan_filter()
+            self._pan_samples.append(raw)
+            return None
+        self._pan_samples.append(raw)
+        filtered = median(self._pan_samples)
+        threshold = self.EXIT_DEADBAND if self._centered[0] else self.ENTER_DEADBAND
+        if abs(raw) <= threshold or abs(filtered) <= threshold or raw*filtered <= 0:
+            self._evidence_sign = 0
+            self._evidence_count = 0
+            return None
+        sign = 1 if raw > 0 else -1
+        if sign != self._evidence_sign:
+            self._evidence_sign, self._evidence_count = sign, 1
+        else:
+            self._evidence_count += 1
+        # Near the centre require three consistent observations; farther away two.
+        needed = 3 if abs(filtered) < 0.25 else 2
+        return filtered if self._evidence_count >= needed else None
+
+    def _reset_tilt_filter(self):
+        self._tilt_samples.clear()
+        self._tilt_evidence_sign = 0
+        self._tilt_evidence_count = 0
+
+    def _stable_tilt_error(self, raw):
+        """Called once per eligible detection batch, never per control tick."""
+        if abs(raw) <= self.ENTER_DEADBAND:
+            self._centered[1] = True
+            self._reset_tilt_filter()
+            self._tilt_samples.append(raw)
+            return None
+        self._tilt_samples.append(raw)
+        filtered = median(self._tilt_samples)
+        threshold = self.EXIT_DEADBAND if self._centered[1] else self.ENTER_DEADBAND
+        if abs(raw) <= threshold or abs(filtered) <= threshold or raw*filtered <= 0:
+            self._tilt_evidence_sign = 0
+            self._tilt_evidence_count = 0
+            return None
+        sign = 1 if raw > 0 else -1
+        if sign != self._tilt_evidence_sign:
+            self._tilt_evidence_sign, self._tilt_evidence_count = sign, 1
+        else:
+            self._tilt_evidence_count += 1
+        # Near the centre require three consistent observations; farther away two.
+        needed = 3 if abs(filtered) < 0.25 else 2
+        return filtered if self._tilt_evidence_count >= needed else None
+
+    def _command(self, error, axis, dt):
+        threshold = self.EXIT_DEADBAND if self._centered[axis] else self.ENTER_DEADBAND
+        if abs(error) <= threshold:
+            self._centered[axis] = True
+            return 0.0
+        self._centered[axis] = False
+        magnitude = self.MIN_SPEED + (self.MAX_SPEED-self.MIN_SPEED) * min(
+            1.0, (abs(error)-self.ENTER_DEADBAND) / (0.65-self.ENTER_DEADBAND))
+        direction = self.pan_direction if axis == 0 else self.tilt_direction
+        desired = magnitude * (1 if error > 0 else -1) * direction
+        previous = self._speed[axis]
+        # Cross through neutral rather than abruptly reversing.
+        if desired * previous < 0:
+            return 0.0
+        if axis == 0:
+            return 0.20 if desired > 0 else -0.34
+        # Channel 2 calibration: positive raises camera, negative lowers it.
+        return 0.20 if desired > 0 else -0.30
+
+    def step(self, now=None):
+        now = self.clock() if now is None else now
+        with self._lock:
+            if self._stop_event.is_set():
+                self._halt()
+                return
+            dt = max(0.0, min(now-self._last_step, 0.1))
+            self._last_step = now
+            batch = self.camera.get_detection_snapshot()
+            state = self.tracker.update(batch, now)
+            width, height = batch['size']
+            if state['mode'] != 'TRACKING':
+                if self._pulse_active:
+                    self._observe_after = now + self.SETTLE_SECONDS
+                self._pulse_active = False
+                self._reset_pan_filter()
+                self._reset_tilt_filter()
+                self._halt()
+                return
+            target = state['target']
+            kind = target.get('aim_kind', 'box')
+            point = self._aim_point(target)
+            if point is None or kind != self._aim_kind:
+                if self._pulse_active:
+                    self._observe_after = now + self.SETTLE_SECONDS
+                self._halt()
+                self._reset_pan_filter()
+                self._reset_tilt_filter()
+                self._centered = [True, True]
+                self._aim_kind = kind
+                self._control_reason = kind if point is None else None
+                if point is None:
+                    self._last_version = batch['version']
+                return
+            self._control_reason = None
+            x, y = point
+            error = (x-width/2)/(width/2)
+            tilt_error = (y-height/2)/(height/2)
+            if self._pulse_active:
+                # Stop each axis against its own error and deadline. New images
+                # can stop a pulse early but never extend or restart it.
+                for axis, raw, initial, until in (
+                    (0, error, self._pulse_error, self._pulse_until),
+                    (1, tilt_error, self._tilt_error, self._tilt_until),
+                ):
+                    if not self._speed[axis]:
+                        continue
+                    crossed = raw * initial < 0
+                    centered = abs(raw) <= self.ENTER_DEADBAND
+                    if now >= until or centered or crossed:
+                        command = self.gimbal.pan if axis == 0 else self.gimbal.tilt
+                        command(0.0)
+                        self._speed[axis] = 0.0
+                        if centered or crossed:
+                            self._centered[axis] = True
+                if not any(self._speed):
+                    self._pulse_active = False
+                    # Camera movement by either axis invalidates pre-stop images.
+                    self._observe_after = now + self.SETTLE_SECONDS
+                    self._reset_pan_filter()
+                    self._reset_tilt_filter()
+                return
+            if (batch['version'] == self._last_version or
+                    batch['captured_at'] < self._observe_after):
+                self._halt()
+                return
+            self._last_version = batch['version']
+            stable_error = self._stable_pan_error(error)
+            pan = 0.0 if stable_error is None else self._command(stable_error, 0, dt)
+            if stable_error is not None:
+                error = stable_error
+            stable_tilt = self._stable_tilt_error(tilt_error) if self.tilt_enabled else None
+            tilt = 0.0 if stable_tilt is None else self._command(stable_tilt, 1, dt)
+            if pan == 0 and tilt == 0:
+                self._halt()
+                return
+            # Effective servo commands with proportional duration instead of a
+            # ramp trapped inside the servo's dead zone.
+            scale = min(1.0, max(0.0, (abs(error)-self.ENTER_DEADBAND)/0.60))
+            duration = self.MIN_PULSE_SECONDS + scale*(self.MAX_PULSE_SECONDS-self.MIN_PULSE_SECONDS)
+            sign = 1 if pan > 0 else -1 if pan < 0 else 0
+            if sign and self._last_pan_sign and sign != self._last_pan_sign:
+                duration = self.MIN_PULSE_SECONDS
+            # Clockwise (1550 us) produces more travel on this gimbal.
+            # Keep at least one nominal 50 Hz PWM period.
+            if pan > 0:
+                duration = max(0.020, duration * 0.75)
+            if sign:
+                self._last_pan_sign = sign
+            deadline = batch['captured_at'] + self.tracker.stale_after
+            required = max(duration if pan else 0.0,
+                           self.TILT_PULSE_SECONDS if tilt else 0.0)
+            if deadline-now < required:
+                self._halt()
+                return
+            self._pulse_until = now + duration
+            self._tilt_until = now + self.TILT_PULSE_SECONDS
+            self._tilt_error = tilt_error if stable_tilt is None else stable_tilt
+            self._pulse_error = error
+            self._pulse_active = True
+            self.gimbal.pan(pan)
+            self.gimbal.tilt(tilt)
+            self._speed = [pan, tilt]
+            self._error = None
 
     def _loop(self):
-        while self._running:
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    self.step()
+                except Exception as exc:
+                    with self._lock:
+                        self._error = str(exc)
+                        self.tracker.stop()
+                        try:
+                            self._halt()
+                        except Exception:
+                            log.exception('Impossibile inviare il neutro al gimbal')
+                    log.exception('Tracking arrestato per errore')
+                self._stop_event.wait(self.PERIOD)
+        finally:
             try:
-                state = self.tracker.snapshot()
+                self._halt()
+            except Exception:
+                log.exception('Arresto finale gimbal fallito')
 
-                if state["mode"] != "TRACKING":
-                    self._stop_pan()
-                    time.sleep(0.05)
-                    continue
-
-                version = self.camera.get_detection_version()
-
-                if version == self._last_detection_version:
-                    time.sleep(0.02)
-                    continue
-
-                self._last_detection_version = version
-
-                detections = self.camera.get_detections()
-                state = self.tracker.update(detections)
-
-                if state["mode"] != "TRACKING":
-                    self._stop_pan()
-                    continue
-
-                target = state.get("target")
-
-                if target is None:
-                    self._stop_pan()
-                    continue
-
-                target_x = target["center"][0]
-                image_center_x = self.IMAGE_WIDTH / 2
-                error_x = target_x - image_center_x
-
-                if abs(error_x) <= self.DEADBAND:
-                    self._stop_pan()
-                    print(f"[PAN] TARGET CENTRATO X={target_x}")
-                    continue
-
-                magnitude = min(
-                    abs(error_x) / self.MAX_ERROR,
-                    1.0,
-                )
-
-                speed = (
-                    self.MIN_SPEED
-                    + magnitude * (self.MAX_SPEED - self.MIN_SPEED)
-                )
-
-                # Il segno dipende dalla posizione del target.
-                # Se la correzione va nel verso sbagliato,
-                # impostare PAN_DIRECTION = 1.
-                if error_x > 0:
-                    speed = -speed
-                else:
-                    speed = speed
-
-                speed *= self.PAN_DIRECTION
-
-                self.gimbal.pan(speed)
-
-                print(
-                    f"[PAN] target_x={target_x} "
-                    f"error={error_x:+.0f} "
-                    f"speed={speed:+.3f}"
-                )
-
-            except Exception as error:
-                self._stop_pan()
-                print(f"[PAN TRACKER] Errore: {error}")
-
-            time.sleep(0.02)
-
-        self._stop_pan()
+    def snapshot(self):
+        with self._lock:
+            return {**self.tracker.snapshot(), 'actuation': 'enabled',
+                    'pan_speed': self._speed[0], 'tilt_speed': self._speed[1],
+                    'tilt_enabled': self.tilt_enabled, 'error': self._error,
+                    'aim_kind': self._aim_kind, 'control_reason': self._control_reason}
 
     def stop(self):
-        self._running = False
-        self._stop_pan()
-
-        if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+        self._stop_event.set()
+        try:
+            self.stop_tracking()
+        finally:
+            if self._thread and self._thread is not threading.current_thread():
+                self._thread.join(timeout=2)
+                if self._thread.is_alive():
+                    raise RuntimeError('Il thread gimbal non si è arrestato')

@@ -1,45 +1,26 @@
 import asyncio
-import json
-
-from fastapi import WebSocket
-
-from ingenuity.core.system_monitor import SystemMonitor
+from urllib.parse import urlsplit
+from fastapi import HTTPException, WebSocketDisconnect
+from ingenuity.auth.authentication import verify_access_token
 
 
-async def status_socket(
-    websocket,
-    camera,
-    tracking_manager,
-):
-
-    await websocket.accept()
-
+async def status_socket(websocket, status_provider):
+    token = websocket.cookies.get('access_token')
+    origin = websocket.headers.get('origin')
     try:
-
+        if not token or (origin and urlsplit(origin).netloc != websocket.headers.get('host')):
+            raise HTTPException(401,'Autenticazione richiesta')
+        verify_access_token(token)
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    try:
         while True:
-
-            status = SystemMonitor.get_status()
-
-            status["camera_data"] = {
-                "fps": camera.get_camera_fps(),
-                "inference_fps": camera.get_inference_fps(),
-                "objects": camera.get_detections(),
-            }
-
-            status["tracking"] = (
-                tracking_manager.snapshot()
-            )
-
-            await websocket.send_text(
-                json.dumps(status)
-            )
-
-            await asyncio.sleep(1)
-
-    except Exception:
-
-        try:
-            await websocket.close()
-
-        except Exception:
-            pass
+            verify_access_token(token)
+            await websocket.send_json(await asyncio.to_thread(status_provider))
+            await asyncio.sleep(0.1)
+    except HTTPException:
+        await websocket.close(code=1008)
+    except WebSocketDisconnect:
+        pass

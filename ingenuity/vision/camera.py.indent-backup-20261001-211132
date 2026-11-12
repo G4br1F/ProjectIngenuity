@@ -129,11 +129,11 @@ class Camera:
                 # BGR888 viene fornito direttamente da Picamera2.
                 # Evitiamo cvtColor() su ogni frame.
                 frame = self.picam2.capture_array("main")
-		frame = cv2.rotate(
-    			frame,
-    			cv2.ROTATE_180,
-		)
-	    except Exception:
+                frame = cv2.rotate(
+                    frame,
+                    cv2.ROTATE_180,
+                )
+            except Exception:
                 if self._running:
                     time.sleep(0.02)
                 continue

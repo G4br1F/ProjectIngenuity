@@ -1,30 +1,18 @@
-
+"""Manual check using the calibrated continuous-servo driver."""
 import time
-from adafruit_servokit import ServoKit
+from ingenuity.hardware.gimbal import Gimbal
 
-kit = ServoKit(channels=16)
+def main():
+    from dotenv import load_dotenv
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    gimbal = Gimbal()
+    try:
+        gimbal.stop()
+        print("Neutri calibrati su PAN=0 e TILT=1; osservazione per 10 secondi")
+        time.sleep(10)
+    finally:
+        gimbal.close()
 
-def test_channel(channel):
-    print(f"Test canale {channel}")
-
-    # Comando neutro iniziale
-    kit.continuous_servo[channel].throttle = 0
-    time.sleep(2)
-
-    # Breve impulso a bassa velocita'
-    kit.continuous_servo[channel].throttle = 0.10
-    time.sleep(0.25)
-
-    # Ritorno al neutro
-    kit.continuous_servo[channel].throttle = 0
-    print("Neutro impostato")
-
-try:
-    test_channel(0)
-    time.sleep(3)
-    test_channel(1)
-
-finally:
-    kit.continuous_servo[0].throttle = 0
-    kit.continuous_servo[1].throttle = 0
-    print("Comandi di arresto inviati")
+if __name__ == "__main__":
+    main()

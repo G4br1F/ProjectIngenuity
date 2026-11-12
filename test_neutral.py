@@ -1,35 +1,18 @@
+"""Manual check using the calibrated continuous-servo driver."""
 import time
-import board
-import busio
-from adafruit_pca9685 import PCA9685
+from ingenuity.hardware.gimbal import Gimbal
 
-i2c = busio.I2C(board.SCL, board.SDA)
-pca = PCA9685(i2c)
-pca.frequency = 50
-
-pan = pca.channels[1]
-tilt = pca.channels[1]
-
-try:
-    pan.duty_cycle = 0
-    tilt.duty_cycle = 0
-    time.sleep(1)
-
-    for pulse_us in (1600,):
-        print(f"\nPAN: test a {pulse_us} us")
-
-        pan.duty_cycle = int(
-            pulse_us / 20000 * 65535
-        )
-
+def main():
+    from dotenv import load_dotenv
+    from pathlib import Path
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    gimbal = Gimbal()
+    try:
+        gimbal.stop()
+        print("Neutri calibrati su PAN=0 e TILT=1; osservazione per 10 secondi")
         time.sleep(10)
+    finally:
+        gimbal.close()
 
-        pan.duty_cycle = 0
-        print("PWM disattivato; osserva se il servo si e fermato.")
-        time.sleep(2)
-
-finally:
-    pan.duty_cycle = 0
-    tilt.duty_cycle = 0
-    pca.deinit()
-    print("Test concluso.")
+if __name__ == "__main__":
+    main()
