@@ -38,7 +38,18 @@ def test_calibrated_pan_pulses_use_driver_frequency():
     g=driver()
     g.pan(.2)
     assert g.pan_servo.duty_cycle==round(1550*50.03*65535/1_000_000)
-    g.pan(-.4)
-    assert g.pan_servo.duty_cycle==round(1400*50.03*65535/1_000_000)
+    g.pan(-.34)
+    assert g.pan_servo.duty_cycle==round(1415*50.03*65535/1_000_000)
     g.stop()
     assert g.pan_servo.duty_cycle==0
+
+
+def test_tilt_calibration_channel_and_stop():
+    assert Gimbal.TILT_CHANNEL == 2
+    g = driver()
+    g.tilt(.20)
+    assert g.tilt_servo.duty_cycle == round(1550*50.03*65535/1_000_000)
+    g.tilt(-.30)
+    assert g.tilt_servo.duty_cycle == round(1425*50.03*65535/1_000_000)
+    g.stop_tilt()
+    assert g.tilt_servo.duty_cycle == 0

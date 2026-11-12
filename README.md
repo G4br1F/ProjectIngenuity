@@ -47,8 +47,8 @@ Usare **un solo processo worker**, senza `--reload` quando si controlla l'hardwa
 
 ## Tracking gimbal
 
-- PAN sul canale **0**, TILT sul canale **1**. Neutri iniziali: **1558 µs** e **1600 µs**, configurabili tramite `.env`.
-- `pan()` e `tilt()` ricevono una **velocità normalizzata tra -1 e +1**, mai un angolo. Valori non finiti o fuori intervallo vengono rifiutati. `center()` invia il neutro, non posiziona il servo.
+- PAN sul canale **0**, TILT sul canale **2**. Neutri iniziali: **1500 µs** per entrambi gli assi, configurabili tramite `.env`.
+- `pan()` e `tilt()` ricevono una **velocità normalizzata tra -1 e +1**, mai un angolo. Valori non finiti o fuori intervallo vengono rifiutati. `center()` disabilita il PWM, non posiziona il servo.
 - La dashboard invia indice **e versione** dell'elenco. Se l'elenco è cambiato o è scaduto, la selezione viene rifiutata, la gimbal fermata e viene richiesto di selezionare di nuovo.
 - Il bersaglio viene associato per classe, distanza e variazione di dimensione. Se due candidati sono troppo simili, il sistema si ferma anziché scegliere arbitrariamente. Non è un identificatore biometrico o una garanzia d'identità durante occlusioni/incroci.
 - Controllo proporzionale a 50 Hz, velocità massima 0,10, accelerazione limitata, isteresi centrale (6% ingresso / 9% uscita del semiasse).
@@ -94,7 +94,7 @@ sono fermi a 1500 us. STOP disabilita il PWM, comportamento verificato sui servo
 installati; non garantisce coppia di mantenimento o arresto in caso di bus guasto.
 Questa calibrazione e specifica dell'hardware, non universale.
 
-Il pan usa 1550 us nel verso positivo e 1400 us nel negativo. La durata e
+Il pan usa 1550 us nel verso positivo e 1415 us nel negativo. La durata e
 proporzionale all'errore, da 25 a 60 ms, e torna al minimo dopo un'inversione.
 Ogni movimento termina senza estensioni dovute a nuove detection. Prima di un
 altro movimento serve un'immagine acquisita almeno 60 ms dopo l'arresto.
@@ -137,9 +137,39 @@ latenza dipendente dagli FPS di inferenza e deve essere verificato sul robot.
 
 ### Taratura a passi piu piccoli
 
-Durata aggiornata: 20–35 ms in senso antiorario (1400 us) e 20–26,25 ms
+Durata aggiornata: 20–35 ms in senso antiorario (1415 us) e 20–26,25 ms
 in senso orario (1550 us). Restano la conferma temporale delle detection,
 l'attesa di 60 ms dopo l'arresto e la richiesta di una nuova immagine successiva
 all'attesa. Nessun movimento viene prolungato dall'arrivo di altre detection.
 Questi sono tempi richiesti al software, non misure dello spostamento angolare:
 la risposta meccanica e i ritardi dello scheduling vanno verificati sul robot.
+
+### Tracking verticale calibrato (12 novembre 2026)
+
+Collegamenti attuali: PAN canale 0, TILT canale 2. Sul tilt, neutro configurato
+a 1500 us, salita a 1550 us (comando +0,20), discesa a 1425 us (-0,30).
+Il test hardware alternato con 100 ms ha prodotto piccoli movimenti e arresto
+alla disabilitazione del PWM; 50 ms non ha prodotto movimento visibile.
+La calibrazione e specifica di questo montaggio. Non prova un guasto dei canali
+1 o 2, ne la presenza di limiti angolari o feedback di posizione.
+
+Per abilitare: TRACK_TILT_ENABLED=1, TILT_NEUTRAL_US=1500, TILT_DIRECTION=-1.
+Il default resta disabilitato per installazioni non ancora calibrate.
+Il segno -1 comanda salita quando il bersaglio e sopra il centro dell'immagine
+(coordinata y minore) e discesa quando e sotto.
+
+Il tilt usa impulsi richiesti di 100 ms, indipendenti dalla durata del pan.
+Ciascun asse termina il proprio impulso se raggiunge la zona centrale,
+attraversa il centro o scade il suo tempo. STOP, LOST, errore e shutdown fermano
+entrambi. Non si prolunga un impulso all'arrivo di nuove detection.
+Ogni asse usa la mediana delle ultime tre osservazioni e la conferma di due
+campioni coerenti (tre vicino al centro). La stessa versione non conta due volte.
+Dopo l'arresto di entrambi, occorre una nuova immagine acquisita almeno 60 ms
+dopo l'arresto e nuova conferma: il movimento di un asse altera tutta la vista.
+Il pan mantiene i comandi e le durate calibrate; durante un movimento combinato
+attende anche la fine del tilt prima di autorizzare il movimento successivo.
+
+Nessun blocco ai bordi laterali e stato reintrodotto. I test software simulano
+gli assi; la prima prova integrata sul robot va fatta con corsa libera,
+cavo non in tensione e STOP accessibile. Non ci sono encoder o finecorsa:
+il software non conosce l'inclinazione assoluta e i tempi dipendono da Linux.

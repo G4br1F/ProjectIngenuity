@@ -109,7 +109,7 @@ def start_pulse(x=800):
 
 def test_pulse_not_extended_and_waits_for_post_stop_capture():
     cam,gimbal,tracker,c=start_pulse()
-    assert gimbal.speed[0]==-.4
+    assert gimbal.speed[0]==-.34
     deadline=c._pulse_until
     cam.batch=batch(3,10.09)
     c.step(10.10)
@@ -124,12 +124,12 @@ def test_pulse_not_extended_and_waits_for_post_stop_capture():
     assert gimbal.speed==[0,0]
     cam.batch=batch(6,deadline+.12)
     c.step(deadline+.13)
-    assert gimbal.speed[0]==-.4
+    assert gimbal.speed[0]==-.34
 
 
 def test_shorter_correction_near_center_and_after_crossing():
     _,g,_,near=start_pulse(540)
-    assert g.speed[0]==-.4
+    assert g.speed[0]==-.34
     _,_,_,far=start_pulse(900)
     assert near._pulse_until < far._pulse_until
     assert near._pulse_until-10.08 >= near.MIN_PULSE_SECONDS-1e-9
@@ -139,7 +139,7 @@ def test_shorter_correction_near_center_and_after_crossing():
 def test_effective_commands_center_and_inversion():
     _,_,_,c=setup()
     assert c._command(0,0,.005)==0
-    assert c._command(.5,0,.005)==-.4
+    assert c._command(.5,0,.005)==-.34
     assert c._command(-.5,0,.005)==.2
     c._speed[0]=.2
     assert c._command(.5,0,.005)==0
@@ -161,7 +161,7 @@ def test_rejected_selection_preserves_active_target():
     before=t.snapshot()
     with pytest.raises(ValueError): c.select(0,999)
     assert t.snapshot()==before
-    assert g.speed[0]==-.4
+    assert g.speed[0]==-.34
 
 
 def test_old_displayed_batch_resolves_reordered_target():
@@ -266,7 +266,7 @@ def test_servo_stays_stopped_through_detection_dropout():
 def test_directional_duration_limits(offset):
     _,g_cw,_,cw=start_pulse(480-offset)
     _,g_ccw,_,ccw=start_pulse(480+offset)
-    assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.4
+    assert g_cw.speed[0]==.2 and g_ccw.speed[0]==-.34
     ccw_duration=ccw._pulse_until-10.08
     cw_duration=cw._pulse_until-10.08
     assert cw_duration==pytest.approx(max(.020,.75*ccw_duration))
@@ -296,7 +296,7 @@ def test_near_center_needs_three_new_consistent_batches():
             assert g.speed==[0,0]
             for repeat in range(5): c.step(stamp+.012+repeat*.001)
             assert g.speed==[0,0]
-        else: assert g.speed[0]==-.4
+        else: assert g.speed[0]==-.34
 
 
 def test_center_measurement_clears_previous_motion_evidence():
@@ -321,3 +321,120 @@ def test_small_corrections_stop_without_replaying_same_detection(x):
     for now in [10.2,10.3,10.4]:
         c.step(now)
         assert g.speed==[0,0]
+
+
+def start_axes(x=480, y=100, enabled=True):
+    cam, g, tracker, c = setup(tilt_enabled=enabled)
+    cam.batch = batch(2, 10, [obj(x, y)])
+    c.select(0, 2)
+    cam.batch = batch(3, 10.07, [obj(x, y)])
+    c.step(10.08)
+    return cam, g, tracker, c
+
+
+@pytest.mark.parametrize('y,speed', [(100, .20), (440, -.30)])
+def test_tilt_runs_100ms_with_pan_centered(y, speed):
+    cam, g, tracker, c = start_axes(y=y)
+    assert g.speed == [0, speed]
+    c.step(10.131)
+    assert g.speed == [0, speed]  # does not stop at the old 20-35ms pan limit
+    c.step(10.181)
+    assert g.speed == [0, 0]
+    c.step(10.4)
+    assert g.speed == [0, 0]  # cannot replay the same image
+
+
+def test_pan_stops_at_own_deadline_while_tilt_continues():
+    cam, g, tracker, c = start_axes(800, 100)
+    assert g.speed == [-.34, .20]
+    c.step(10.12)
+    assert g.speed == [0, .20]
+    cam.batch = batch(4, 10.13, [obj(800, 100)])
+    c.step(10.14)
+    assert g.speed == [0, .20]
+    assert c._tilt_until == pytest.approx(10.18)
+    c.step(10.181)
+    assert g.speed == [0, 0]
+
+
+def test_tilt_centered_stops_only_tilt():
+    cam, g, tracker, c = start_axes(800, 150)
+    assert g.speed == [-.34, .20]
+    cam.batch = batch(4, 10.09, [obj(800, 270)])
+    c.step(10.10)
+    assert g.speed == [-.34, 0]
+
+
+def test_pan_centered_does_not_stop_tilt():
+    cam, g, tracker, c = start_axes(600, 100)
+    cam.batch = batch(4, 10.09, [obj(480, 100)])
+    c.step(10.10)
+    assert g.speed == [0, .20]
+
+
+def test_tilt_crossing_center_stops_without_immediate_reversal():
+    cam, g, tracker, c = start_axes(y=200)
+    # Three samples needed near centre; seed a third fresh batch.
+    cam.batch = batch(4, 10.10, [obj(480, 200)])
+    c.step(10.11)
+    assert g.speed[1] == .20
+    cam.batch = batch(5, 10.12, [obj(480, 300)])
+    c.step(10.13)
+    assert g.speed == [0, 0]
+
+
+@pytest.mark.parametrize('cause', ['stop', 'missing', 'stale', 'shutdown'])
+def test_both_axes_stop_on_loss_stop_or_shutdown(cause):
+    cam, g, tracker, c = start_axes(800, 100)
+    assert all(g.speed)
+    if cause == 'stop':
+        c.stop_tracking()
+    elif cause == 'shutdown':
+        c.stop()
+    elif cause == 'missing':
+        cam.batch = batch(4, 10.09, [])
+        c.step(10.10)
+    else:
+        c.step(12)
+    assert g.speed == [0, 0]
+    assert not c._pulse_active
+
+
+def test_tilt_waits_for_post_motion_images_and_new_evidence():
+    cam, g, tracker, c = start_axes()
+    c.step(10.181)
+    cam.batch = batch(4, 10.20, [obj(480, 100)])
+    c.step(10.26)
+    assert g.speed == [0, 0]  # captured before settling
+    cam.batch = batch(5, 10.25, [obj(480, 100)])
+    c.step(10.27)
+    assert g.speed == [0, 0]  # only one new eligible observation
+    cam.batch = batch(6, 10.28, [obj(480, 100)])
+    c.step(10.29)
+    assert g.speed == [0, .20]
+
+
+def test_tilt_disabled_stays_stopped():
+    cam, g, tracker, c = start_axes(480, 100, enabled=False)
+    for version in range(4, 8):
+        cam.batch = batch(version, 10+version*.1, [obj(480, 100)])
+        c.step(10+version*.1+.01)
+        assert g.speed == [0, 0]
+
+
+def test_tilt_cannot_start_when_image_expires_before_100ms():
+    cam, g, tracker, c = setup(tilt_enabled=True)
+    cam.batch = batch(2, 10, [obj(480, 100)])
+    c.select(0, 2)
+    cam.batch = batch(3, 10.07, [obj(480, 100)])
+    c.step(11.50)  # 70ms freshness remaining
+    assert g.speed == [0, 0]
+
+
+def test_vertical_noise_requires_consistent_observations():
+    cam, g, tracker, c = start_axes(y=270)
+    for version, y in enumerate([235, 305]*5, 4):
+        stamp = 10 + version*.1
+        cam.batch = batch(version, stamp, [obj(480, y)])
+        c.step(stamp+.01)
+        assert g.speed == [0, 0]

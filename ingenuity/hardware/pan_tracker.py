@@ -24,6 +24,7 @@ class PanTracker:
     MAX_PULSE_SECONDS = 0.035
     MIN_PULSE_SECONDS = 0.020
     SETTLE_SECONDS = 0.060
+    TILT_PULSE_SECONDS = 0.100
 
     def __init__(self, camera, gimbal, tracker, *, autostart=True, clock=time.monotonic,
                  pan_direction=None, tilt_direction=None, tilt_enabled=None):
@@ -38,6 +39,7 @@ class PanTracker:
         self._stop_event = threading.Event()
         self._thread = None
         self._last_version = -1
+        self._tilt_until = 0.0
         self._pulse_until = 0.0
         self._observe_after = float("-inf")
         self._pulse_active = False
@@ -46,6 +48,9 @@ class PanTracker:
         self._centered = [True, True]
         self._speed = [0.0, 0.0]
         self._error = None
+        self._tilt_samples = deque(maxlen=3)
+        self._tilt_evidence_sign = 0
+        self._tilt_evidence_count = 0
         self._pan_samples = deque(maxlen=3)
         self._evidence_sign = 0
         self._evidence_count = 0
@@ -55,6 +60,7 @@ class PanTracker:
 
     def _halt(self):
         self._speed = [0.0, 0.0]
+        self._pulse_active = False
         self.gimbal.stop()
 
     def select(self, index, version):
@@ -82,8 +88,12 @@ class PanTracker:
             self._last_pan_sign = 0
             self._centered = [True, True]
             self._reset_pan_filter()
+            self._reset_tilt_filter()
             width = current['size'][0]
             self._stable_pan_error((state['target']['center'][0]-width/2)/(width/2))
+            if self.tilt_enabled:
+                height = current['size'][1]
+                self._stable_tilt_error((state['target']['center'][1]-height/2)/(height/2))
             return self.snapshot()
 
     def stop_tracking(self):
@@ -92,6 +102,7 @@ class PanTracker:
             self._pulse_until = 0.0
             self._pulse_active = False
             self._reset_pan_filter()
+            self._reset_tilt_filter()
             self._halt()
             return self.snapshot()
 
@@ -123,6 +134,34 @@ class PanTracker:
         needed = 3 if abs(filtered) < 0.25 else 2
         return filtered if self._evidence_count >= needed else None
 
+    def _reset_tilt_filter(self):
+        self._tilt_samples.clear()
+        self._tilt_evidence_sign = 0
+        self._tilt_evidence_count = 0
+
+    def _stable_tilt_error(self, raw):
+        """Called once per eligible detection batch, never per control tick."""
+        if abs(raw) <= self.ENTER_DEADBAND:
+            self._centered[1] = True
+            self._reset_tilt_filter()
+            self._tilt_samples.append(raw)
+            return None
+        self._tilt_samples.append(raw)
+        filtered = median(self._tilt_samples)
+        threshold = self.EXIT_DEADBAND if self._centered[1] else self.ENTER_DEADBAND
+        if abs(raw) <= threshold or abs(filtered) <= threshold or raw*filtered <= 0:
+            self._tilt_evidence_sign = 0
+            self._tilt_evidence_count = 0
+            return None
+        sign = 1 if raw > 0 else -1
+        if sign != self._tilt_evidence_sign:
+            self._tilt_evidence_sign, self._tilt_evidence_count = sign, 1
+        else:
+            self._tilt_evidence_count += 1
+        # Near the centre require three consistent observations; farther away two.
+        needed = 3 if abs(filtered) < 0.25 else 2
+        return filtered if self._tilt_evidence_count >= needed else None
+
     def _command(self, error, axis, dt):
         threshold = self.EXIT_DEADBAND if self._centered[axis] else self.ENTER_DEADBAND
         if abs(error) <= threshold:
@@ -139,8 +178,8 @@ class PanTracker:
             return 0.0
         if axis == 0:
             return 0.20 if desired > 0 else -0.34
-        step = self.ACCELERATION * dt
-        return max(previous-step, min(previous+step, desired))
+        # Channel 2 calibration: positive raises camera, negative lowers it.
+        return 0.20 if desired > 0 else -0.30
 
     def step(self, now=None):
         now = self.clock() if now is None else now
@@ -158,20 +197,35 @@ class PanTracker:
                     self._observe_after = now + self.SETTLE_SECONDS
                 self._pulse_active = False
                 self._reset_pan_filter()
+                self._reset_tilt_filter()
                 self._halt()
                 return
             x, y = state['target']['center']
             error = (x-width/2)/(width/2)
+            tilt_error = (y-height/2)/(height/2)
             if self._pulse_active:
-                # Never extend a movement because another inference finished.
-                crossed = error * self._pulse_error < 0
-                if now >= self._pulse_until or abs(error) <= self.ENTER_DEADBAND or crossed:
-                    self._halt()
+                # Stop each axis against its own error and deadline. New images
+                # can stop a pulse early but never extend or restart it.
+                for axis, raw, initial, until in (
+                    (0, error, self._pulse_error, self._pulse_until),
+                    (1, tilt_error, self._tilt_error, self._tilt_until),
+                ):
+                    if not self._speed[axis]:
+                        continue
+                    crossed = raw * initial < 0
+                    centered = abs(raw) <= self.ENTER_DEADBAND
+                    if now >= until or centered or crossed:
+                        command = self.gimbal.pan if axis == 0 else self.gimbal.tilt
+                        command(0.0)
+                        self._speed[axis] = 0.0
+                        if centered or crossed:
+                            self._centered[axis] = True
+                if not any(self._speed):
                     self._pulse_active = False
+                    # Camera movement by either axis invalidates pre-stop images.
                     self._observe_after = now + self.SETTLE_SECONDS
                     self._reset_pan_filter()
-                    if abs(error) <= self.ENTER_DEADBAND or crossed:
-                        self._centered[0] = True
+                    self._reset_tilt_filter()
                 return
             if (batch['version'] == self._last_version or
                     batch['captured_at'] < self._observe_after):
@@ -182,7 +236,8 @@ class PanTracker:
             pan = 0.0 if stable_error is None else self._command(stable_error, 0, dt)
             if stable_error is not None:
                 error = stable_error
-            tilt = self._command((y-height/2)/(height/2), 1, dt) if self.tilt_enabled else 0.0
+            stable_tilt = self._stable_tilt_error(tilt_error) if self.tilt_enabled else None
+            tilt = 0.0 if stable_tilt is None else self._command(stable_tilt, 1, dt)
             if pan == 0 and tilt == 0:
                 self._halt()
                 return
@@ -200,10 +255,14 @@ class PanTracker:
             if sign:
                 self._last_pan_sign = sign
             deadline = batch['captured_at'] + self.tracker.stale_after
-            if deadline-now < duration:
+            required = max(duration if pan else 0.0,
+                           self.TILT_PULSE_SECONDS if tilt else 0.0)
+            if deadline-now < required:
                 self._halt()
                 return
             self._pulse_until = now + duration
+            self._tilt_until = now + self.TILT_PULSE_SECONDS
+            self._tilt_error = tilt_error if stable_tilt is None else stable_tilt
             self._pulse_error = error
             self._pulse_active = True
             self.gimbal.pan(pan)
